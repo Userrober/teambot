@@ -1,0 +1,41 @@
+# TeamsFx files
+env/.env.*.user
+env/.env.local
+.localConfigs.playground
+.localConfigs
+.notification.localstore.json
+.notification.playgroundstore.json
+appPackage/build
+
+# dependencies
+node_modules/
+
+# misc
+.env
+.deployment
+.DS_Store
+
+# build
+lib/
+dist/
+
+# Dev tool directories
+/devTools/
+
+# Runtime state
+bot-state.json
+teams-messages.log
+inbox/
+*.debug.log
+
+# App package
+appPackage.teams.zip
+
+# Debug files
+*.debug.log
+2026-*.log
+image.png
+
+# VS Code local settings
+.vscode/
+.claude/
