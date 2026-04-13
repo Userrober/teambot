@@ -109,6 +109,7 @@ export class ClaudeCodeBridge {
     session.busy = true;
     try {
       const result = await this.invokeClaude(session, text);
+      console.log("[Claude CLI raw]", JSON.stringify(result).slice(0, 1000));
       session.claudeSessionId = result.session_id;
       session.totalCostUsd += result.total_cost_usd;
       session.messageCount++;
@@ -118,7 +119,7 @@ export class ClaudeCodeBridge {
       this.sessionStore?.setClaudeSessionId(session.conversationId, result.session_id);
 
       if (result.is_error) {
-        throw new Error(`Claude Code error: ${result.result}`);
+        throw new Error(result.result || `Claude error (${result.subtype}, stop: ${result.stop_reason})`);
       }
       return result.result;
     } catch (error) {
@@ -134,7 +135,7 @@ export class ClaudeCodeBridge {
           session.lastActivity = Date.now();
           this.sessionStore?.setClaudeSessionId(session.conversationId, result.session_id);
           if (result.is_error) {
-            throw new Error(`Claude Code error: ${result.result}`);
+            throw new Error(result.result || "Claude CLI returned an error with no details");
           }
           return result.result;
         } catch (retryError) {
@@ -192,11 +193,11 @@ export class ClaudeCodeBridge {
       child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
 
       child.on("error", (err) => reject(err));
-      child.on("close", () => {
+      child.on("close", (code) => {
         if (stdout) {
           resolve({ stdout, stderr });
         } else {
-          reject(new Error(`Claude CLI exited with no output. stderr: ${stderr.slice(0, 500)}`));
+          reject(new Error(`Claude CLI exited (code ${code}) with no output. stderr: ${stderr.slice(0, 500)}`));
         }
       });
 
@@ -206,7 +207,11 @@ export class ClaudeCodeBridge {
     });
 
     try {
-      return JSON.parse(stdout) as ClaudeResult;
+      const parsed = JSON.parse(stdout) as ClaudeResult;
+      if (!parsed.result && parsed.is_error && stderr) {
+        parsed.result = stderr.slice(0, 500);
+      }
+      return parsed;
     } catch {
       throw new Error(
         `Failed to parse Claude CLI output.\nstdout: ${stdout.slice(0, 500)}\nstderr: ${stderr.slice(0, 500)}`
