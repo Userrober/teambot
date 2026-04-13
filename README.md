@@ -201,8 +201,8 @@ teambot/
 | `CLAUDE_CLI_PATH` | Claude CLI 路径 | `claude` |
 | `CLAUDE_MODEL` | 模型 | `claude-opus-4-6-20250514` |
 | `CLAUDE_WORKING_DIR` | CLI 工作目录 | 当前目录 |
-| `CLAUDE_TIMEOUT_MS` | 超时（毫秒） | `120000` |
-| `CLAUDE_MAX_BUDGET_USD` | 单次最大费用 | `1.0` |
+| `CLAUDE_TIMEOUT_MS` | 超时（毫秒，0=无限制） | `300000` |
+| `CLAUDE_MAX_BUDGET_USD` | 单次最大费用（0=无限制） | `0` |
 | `CLAUDE_SKIP_PERMISSIONS` | 跳过权限确认 | `true` |
 
 ## 常见问题
