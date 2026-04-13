@@ -183,8 +183,8 @@ export class ClaudeCodeBridge {
     }>((resolve, reject) => {
       const child = spawn(this.config.cliPath, args, {
         cwd: this.config.workingDirectory,
-        timeout: this.config.timeoutMs,
         shell: true,
+        ...(this.config.timeoutMs > 0 ? { timeout: this.config.timeoutMs } : {}),
       });
 
       let stdout = "";
