@@ -27,6 +27,9 @@ bot-state.json
 teams-messages.log
 inbox/
 *.debug.log
+.teambot.pids
+.bot.log
+.tunnel.log
 
 # App package
 appPackage.teams.zip

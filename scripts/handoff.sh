@@ -60,3 +60,6 @@ echo "  When you come back, run:"
 echo "    claude --resume ${CLAUDE_SESSION_ID}"
 echo "  Or:"
 echo "    bash scripts/takeback.sh"
+
+# Stop mirroring (so hook doesn't push from Bot's claude -p process)
+rm -f "$HOME/.claude/teams-session"

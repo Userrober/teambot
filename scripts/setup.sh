@@ -1,6 +1,6 @@
 #!/bin/bash
 # TeamBot Setup — One-time setup for new users
-# Run this after cloning the repo and running npm install
+# Run this after cloning the repo
 
 set -e
 
@@ -20,7 +20,6 @@ if ! command -v node &> /dev/null; then
   echo "  ERROR: Node.js not found. Install Node.js 20+ first."
   exit 1
 fi
-NODE_VER=$(node -v | sed 's/v//' | cut -d. -f1)
 echo "  Node.js: $(node -v)"
 
 # Claude Code CLI
@@ -31,20 +30,25 @@ if ! command -v claude &> /dev/null; then
 fi
 echo "  Claude CLI: found"
 
+# Dev Tunnel CLI (optional but recommended)
+if ! command -v devtunnel &> /dev/null; then
+  echo "  WARNING: Dev Tunnel CLI not found."
+  echo "  Install it: winget install Microsoft.devtunnel"
+  echo "  Required for Teams mode."
+else
+  echo "  Dev Tunnel CLI: found"
+fi
+
 # ── Step 2: Install dependencies ──
 echo "[2/5] Installing dependencies..."
 cd "$PROJECT_DIR"
 npm install --silent 2>/dev/null
 echo "  Done."
 
-# ── Step 3: Install Playground CLI ──
-echo "[3/5] Installing Playground CLI..."
-if ! command -v agentsplayground &> /dev/null; then
-  npm install -g @microsoft/m365agentsplayground --silent 2>/dev/null
-  echo "  Installed @microsoft/m365agentsplayground"
-else
-  echo "  Already installed."
-fi
+# ── Step 3: Build TypeScript ──
+echo "[3/5] Building project..."
+npm run build
+echo "  Done."
 
 # ── Step 4: Copy hooks ──
 echo "[4/5] Setting up Claude Code hooks..."
@@ -118,15 +122,20 @@ fi
 echo ""
 echo "=== Setup Complete! ==="
 echo ""
-echo "Usage:"
+echo "Next steps — one-time Teams configuration:"
 echo ""
-echo "  Playground mode (local browser):"
-echo "    bash scripts/connect-teams.sh"
-echo "    Open http://localhost:56150"
+echo "  1. Login to Dev Tunnel:"
+echo "     devtunnel user login"
 echo ""
-echo "  Teams mode (requires Bot registration + dev tunnel):"
-echo "    See SETUP-TEAMS.md for one-time Teams configuration."
-echo "    bash scripts/connect-teams.sh"
+echo "  2. Create a tunnel:"
+echo "     devtunnel create --allow-anonymous"
+echo "     devtunnel port create -p 3978"
 echo ""
-echo "  Stop mirroring:"
-echo "    bash scripts/disconnect-teams.sh"
+echo "  3. Register a Bot in Bot Framework Portal"
+echo "     See README.md for details."
+echo ""
+echo "  4. Create .localConfigs with your Bot credentials"
+echo ""
+echo "  5. Package and upload Teams App"
+echo ""
+echo "After one-time setup, start with: npm run start:teams"
