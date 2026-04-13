@@ -405,4 +405,51 @@ app.server.registerRoute("POST", "/api/inbox", async (req) => {
   }
 });
 
+// POST /api/handoff - Terminal hands off its Claude session to Teams
+app.server.registerRoute("POST", "/api/handoff", async (req) => {
+  try {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const claudeSessionId = body?.claude_session_id;
+
+    if (!claudeSessionId) {
+      return { status: 400, body: JSON.stringify({ error: "Missing claude_session_id" }) };
+    }
+
+    // Bind all known conversations to this Claude session
+    const convId = lastConversationId || sessionStore.getChannelConversationId();
+    if (convId) {
+      sessionStore.setClaudeSessionId(convId, claudeSessionId);
+      claudeBridge.bindSession(convId, claudeSessionId);
+      logToFile("Handoff", `Teams bound to Claude session ${claudeSessionId.slice(0, 8)}...`);
+    }
+
+    return { status: 200, body: JSON.stringify({ ok: true, claude_session_id: claudeSessionId }) };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logToFile("Handoff ERROR", errMsg);
+    return { status: 500, body: JSON.stringify({ error: errMsg }) };
+  }
+});
+
+// POST /api/takeback - Terminal takes back its Claude session from Teams
+app.server.registerRoute("POST", "/api/takeback", async (req) => {
+  try {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const claudeSessionId = body?.claude_session_id;
+
+    // Remove binding — Teams will create independent sessions again
+    const convId = lastConversationId || sessionStore.getChannelConversationId();
+    if (convId) {
+      sessionStore.removeClaudeSession(convId);
+      claudeBridge.resetSession(convId);
+      logToFile("Takeback", `Teams unbound from Claude session ${claudeSessionId?.slice(0, 8) || "unknown"}...`);
+    }
+
+    return { status: 200, body: JSON.stringify({ ok: true }) };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return { status: 500, body: JSON.stringify({ error: errMsg }) };
+  }
+});
+
 export default app;
