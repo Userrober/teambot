@@ -126,14 +126,17 @@ npm run disconnect
 
 ### Session 共享（Handoff/Takeback）
 
-当你需要离开电脑但想继续在手机上与 Claude 交互（共享同一个上下文）：
+让 Teams 和终端共享同一个 Claude 上下文。共享后在 Teams 发消息，Claude 能看到终端的完整对话历史。
 
-**移交给 Teams：**
+**共享给 Teams：**
 ```bash
 # 在 Claude Code 终端中执行
 ! bash scripts/handoff.sh
-# 然后退出终端: /exit
 ```
+
+共享后终端和 Teams 都可以使用，但不要同时发消息（避免 session 冲突）。
+
+如果你要离开电脑，可以退出终端（`/exit`），Teams 会完全接管。
 
 Teams 中发消息将使用终端的 Claude session，共享完整上下文。
 
