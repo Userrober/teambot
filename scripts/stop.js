@@ -57,8 +57,8 @@ try {
   }
 } catch {}
 
-// Clean up log files
-for (const f of ['.bot.log', '.tunnel.log']) {
+// Clean up log files and state
+for (const f of ['.bot.log', '.tunnel.log', 'bot-state.json']) {
   try { fs.unlinkSync(path.join(PROJECT_DIR, f)); } catch {}
 }
 

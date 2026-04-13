@@ -63,7 +63,7 @@ async function start() {
   const tunnelLog = fs.openSync(TUNNEL_LOG, 'w');
   const tunnelProc = spawn('devtunnel', ['host', tunnelId], {
     stdio: ['ignore', tunnelLog, tunnelLog],
-    detached: true,
+    windowsHide: true,
     shell: true,
   });
   tunnelProc.unref();
@@ -109,7 +109,7 @@ async function start() {
   const botLog = fs.openSync(BOT_LOG, 'w');
   const botProc = spawn('npx', ['ts-node', './index.ts'], {
     stdio: ['ignore', botLog, botLog],
-    detached: true,
+    windowsHide: true,
     cwd: PROJECT_DIR,
     env,
     shell: true,
