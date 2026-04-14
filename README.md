@@ -11,6 +11,7 @@
 
 ## 前置条件
 
+- [Git for Windows](https://git-scm.com/download/win)（包含 Git Bash，脚本需要 bash 环境）
 - [Node.js](https://nodejs.org/) 20+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
   ```bash
@@ -22,6 +23,40 @@
   winget install Microsoft.devtunnel
   ```
 - Microsoft 365 账号（有 Teams 权限）
+  > **注意**：企业内部账号（如 intern 账号）可能没有注册 Bot 的权限。实测 [M365 开发者账号](https://developer.microsoft.com/microsoft-365/dev-program)（免费申请）可以成功注册。
+
+## 快速上手（完整流程）
+
+以下是从零到可用的完整步骤：
+
+```bash
+# 1. 克隆并安装
+git clone https://github.com/Userrober/teambot.git
+cd teambot
+npm run setup
+
+# 2. 一次性配置（详见下方"一次性 Teams 配置"）
+devtunnel user login
+devtunnel create --allow-anonymous
+devtunnel port create -p 3978
+# 注册 Bot、配置 .localConfigs、上传 Teams App
+
+# 3. 每次使用 — 启动
+npm run start:teams
+
+# 4. 在 Teams 里找到你的 Bot，发消息即可
+
+# 5. 共享终端上下文（可选）
+# 在 Claude Code 终端里执行：
+! bash scripts/handoff.sh
+
+# 6. 取回终端
+bash scripts/takeback.sh
+claude --resume <session-id>
+
+# 7. 停止
+npm run stop
+```
 
 ## 安装
 
@@ -66,12 +101,11 @@ devtunnel host <tunnel-id>
 
 ### 4. 注册 Bot
 
-方法 A — 使用 VS Code M365 Agents Toolkit 扩展自动 provision
+在 [Bot Framework Portal](https://dev.botframework.com/bots) 注册（需要 M365 开发者账号）：
 
-方法 B — 手动注册：
-1. 前往 [Azure Portal](https://portal.azure.com/) > App registrations > New registration
-2. 创建应用，记下 `Application (client) ID` 和创建一个 `Client secret`
-3. 前往 [Bot Framework](https://dev.botframework.com/bots) > Create a bot
+1. 点击 Create a bot
+2. 注册 Microsoft App ID（会跳转到 Azure Portal 创建 App registration）
+3. 记下 `Application (client) ID` 和创建一个 `Client secret`
 4. Messaging endpoint: `https://<your-tunnel-url>/api/messages`
 5. 添加 Teams channel
 
@@ -216,7 +250,7 @@ teambot/
 Teams 模式下有 2-5 秒延迟，是 Dev Tunnel 导致的，属于正常现象。
 
 **Q: Handoff 后 Teams 报错？**
-确保 handoff 后退出了终端（`/exit`）。同一个 Claude session 不能同时被两个进程使用。
+不要同时从终端和 Teams 发消息。等一边回复完再从另一边发。如果冲突了，运行 `npm run stop && npm run start:teams` 重启。
 
 **Q: 如何切换模型？**
 在 Teams 中发送 `/model` 查看列表，`/model 2` 切换。
