@@ -1,4 +1,8 @@
 import { spawn } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import * as readline from "readline";
 import type {
   ClaudeResult,
   ClaudeBridgeConfig,
@@ -81,6 +85,75 @@ export class ClaudeCodeBridge {
       queueLength: session.queue.length,
       lastActivity: new Date(session.lastActivity).toISOString(),
     };
+  }
+
+  listLocalSessions(): Array<{ id: string; date: string; messageCount: number; preview: string }> {
+    // Find Claude Code sessions stored as JSONL files
+    const home = os.homedir();
+    const projectsDir = path.join(home, ".claude", "projects");
+
+    if (!fs.existsSync(projectsDir)) return [];
+
+    // Find the project directory by matching path segments
+    // Claude Code encodes paths like C:\Users\foo\bar -> C--Users-foo-bar
+    const wdParts = this.config.workingDirectory
+      .split(path.sep)
+      .filter(Boolean)
+      .map(p => p.replace(":", ""));
+    const sessionsDir = fs.readdirSync(projectsDir)
+      .map(d => path.join(projectsDir, d))
+      .filter(d => fs.statSync(d).isDirectory())
+      .find(d => {
+        const dirName = path.basename(d);
+        // Check if all path segments appear in order in the directory name
+        return wdParts.every(part => dirName.includes(part));
+      });
+
+    if (!sessionsDir) return [];
+
+    const files = fs.readdirSync(sessionsDir)
+      .filter(f => f.endsWith(".jsonl") && !f.includes("subagents"))
+      .map(f => {
+        const filePath = path.join(sessionsDir, f);
+        const id = f.replace(".jsonl", "");
+        const stat = fs.statSync(filePath);
+        const date = stat.mtime.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+        let messageCount = 0;
+        let preview = "";
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          for (const line of content.split("\n")) {
+            if (!line.trim()) continue;
+            try {
+              const d = JSON.parse(line);
+              if (d.type === "user" && !d.isMeta) {
+                messageCount++;
+                if (!preview) {
+                  const msg = d.message?.content;
+                  if (typeof msg === "string") {
+                    preview = msg.slice(0, 40);
+                  } else if (Array.isArray(msg)) {
+                    for (const c of msg) {
+                      if (c?.type === "text" && c.text) {
+                        preview = c.text.slice(0, 40);
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+            } catch {}
+          }
+        } catch {}
+
+        return { id, date, messageCount, preview, mtime: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 10)
+      .map(({ mtime, ...rest }) => rest);
+
+    return files;
   }
 
   private getOrCreateSession(conversationId: string): ConversationSession {
@@ -167,8 +240,8 @@ export class ClaudeCodeBridge {
     if (this.config.maxBudgetUsd) {
       args.push("--max-budget-usd", String(this.config.maxBudgetUsd));
     }
-    if (this.config.skipPermissions) {
-      args.push("--dangerously-skip-permissions");
+    if (this.config.permissionMode) {
+      args.push("--permission-mode", this.config.permissionMode);
     }
     if (this.config.systemPrompt) {
       args.push("--append-system-prompt", this.config.systemPrompt);

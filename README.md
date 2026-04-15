@@ -1,6 +1,79 @@
-# TeamBot — Claude Code × Teams Bridge
+# TeamBot — Claude Code x Teams Bridge
 
 在 Microsoft Teams 中与 Claude Code 交互。手机上发消息就能控制电脑上的 Claude Code 写代码。
+
+## 两种使用场景
+
+### 场景一：终端镜像（Terminal → Teams 推送）
+
+在电脑终端使用 Claude Code 时，对话内容实时同步到 Teams。适合离开电脑后用手机查看 Claude 的工作进度。
+
+```bash
+# 在终端启动镜像
+npm run connect
+
+# 之后在终端正常使用 Claude Code，所有对话自动推送到 Teams
+claude
+> 帮我写一个登录页面
+# → Teams 上实时看到 Claude 的回复
+
+# 停止镜像
+npm run disconnect
+```
+
+启动后终端的每一轮对话（你的提问 + Claude 的回复）都会自动出现在 Teams 的 Bot 聊天里。
+
+### 场景二：Session 共享（Teams ↔ Terminal）
+
+在 Teams 中直接接管终端的 Claude Code 会话，共享完整上下文。适合在手机上继续电脑上的工作。
+
+**方式 A：在 Teams 中选择本地 session**
+
+```
+# 在 Teams 发送，列出电脑上所有 Claude Code 会话：
+/resume
+
+# Bot 返回：
+# 1. `209ddf7d-da21-461a-bba9-b29dc933d32e` — 04/15 14:35 — 12 msgs — 帮我写一个登录页面
+# 2. `a1b2c3d4-e5f6-7890-abcd-ef1234567890` — 04/15 10:20 — 5 msgs — Fix the API endpoint
+
+# 按编号选择：
+/resume 1
+
+# 或用完整 session ID：
+/resume 209ddf7d-da21-461a-bba9-b29dc933d32e
+
+# 绑定后，Teams 发消息就和终端共享同一个 Claude 上下文
+你好，继续刚才的工作，把登录页面加上表单验证
+# → Claude 能看到之前终端里的完整对话历史
+```
+
+**方式 B：从终端 Handoff 给 Teams**
+
+```bash
+# 在 Claude Code 终端中执行：
+! bash scripts/handoff.sh
+
+# 之后可以退出终端，Teams 完全接管
+# 在 Teams 里继续发消息即可
+```
+
+**取回到终端：**
+
+```bash
+bash scripts/takeback.sh
+claude --resume <session-id>
+```
+
+**其他常用 Teams 命令：**
+
+```
+/status    # 查看当前 session 信息（ID、消息数、费用、最后活动时间）
+/model     # 查看/切换模型（如 /model opus, /model 2）
+/compact   # 压缩上下文，减少 token 占用
+/reset     # 重置会话，开始全新对话
+/help      # 显示所有命令
+```
 
 ## 功能
 
@@ -10,6 +83,8 @@
 - **命令系统** — `/help` `/reset` `/status` `/model` `/compact` 等
 
 ## 前置条件
+
+在开始之前，确保你有以下工具和账号：
 
 - [Git for Windows](https://git-scm.com/download/win)（包含 Git Bash，脚本需要 bash 环境）
 - [Node.js](https://nodejs.org/) 20+
@@ -23,45 +98,14 @@
   winget install Microsoft.devtunnel
   ```
 - Microsoft 365 账号（有 Teams 权限）
-  > **注意**：企业内部账号（如 intern 账号）可能没有注册 Bot 的权限。实测 [M365 开发者账号](https://developer.microsoft.com/microsoft-365/dev-program)（免费申请）可以成功注册。
+  > **注意**：企业内部账号（如 intern 账号）可能没有在 [Teams Developer Portal](https://dev.teams.microsoft.com/) 注册 Bot 的权限。实测 [M365 开发者账号](https://developer.microsoft.com/microsoft-365/dev-program)（免费申请）可以成功注册。
 
-## 快速上手（完整流程）
+## 完整搭建流程
 
-以下是从零到可用的完整步骤：
+### 第一步：克隆并安装
 
 ```bash
-# 1. 克隆并安装
 git clone https://github.com/Userrober/teambot.git
-cd teambot
-npm run setup
-
-# 2. 一次性配置（详见下方"一次性 Teams 配置"）
-devtunnel user login
-devtunnel create --allow-anonymous
-devtunnel port create -p 3978
-# 注册 Bot、配置 .localConfigs、上传 Teams App
-
-# 3. 每次使用 — 启动
-npm run start:teams
-
-# 4. 在 Teams 里找到你的 Bot，发消息即可
-
-# 5. 共享终端上下文（可选）
-# 在 Claude Code 终端里执行：
-! bash scripts/handoff.sh
-
-# 6. 取回终端
-bash scripts/takeback.sh
-claude --resume <session-id>
-
-# 7. 停止
-npm run stop
-```
-
-## 安装
-
-```bash
-git clone <repo-url>
 cd teambot
 npm run setup
 ```
@@ -72,59 +116,39 @@ npm run setup
 - 构建 TypeScript
 - 配置 Claude Code hooks（用于终端镜像）
 
-## 一次性 Teams 配置
+### 第二步：一键配置（Dev Tunnel + Bot 注册 + 打包）
 
-首次使用需要完成以下配置（只需做一次）：
-
-### 1. 登录 Dev Tunnel
+运行配置向导，它会引导你完成所有一次性设置：
 
 ```bash
-devtunnel user login
+node scripts/configure.js
 ```
 
-### 2. 创建 Tunnel
+向导会自动引导你完成：
+1. **检测/创建 Dev Tunnel** — 自动获取 tunnel URL
+2. **打开 Teams Developer Portal** — 引导你注册 Bot、创建 Client Secret
+3. **打开 Bot Framework Portal** — 引导你获取 Tenant ID
+4. **填写凭证** — 输入 CLIENT_ID、CLIENT_SECRET、TENANT_ID
+5. **生成配置文件** — 自动创建 `.localConfigs`
+6. **打包 Teams App** — 自动生成 `appPackage/build/appPackage.zip`
+
+> **需要拿到的三个值**：`CLIENT_ID`（Bot ID，创建 Bot 时自动生成）、`CLIENT_SECRET`（在 Bot 页面的 Client secrets 中手动创建，只显示一次）、`TENANT_ID`（在 [Bot Framework Portal](https://dev.botframework.com/bots) → Bot Settings 中的 App Tenant ID）。缺少任何一个都会导致 401 错误。
+
+### 第三步：上传 Teams App
+
+1. 打开 Teams → 应用 → 管理你的应用 → 上传自定义应用
+2. 选择 `appPackage/build/appPackage.zip`
+3. 安装到个人或团队
+
+### 第四步：启动并测试
 
 ```bash
-devtunnel create --allow-anonymous
-devtunnel port create -p 3978
+npm run start:teams
 ```
 
-记下 tunnel ID（如 `quick-ant-8c3x1kp`）。
+在 Teams 中找到你的 Bot，发一条消息。如果一切正常，Claude 会回复。
 
-### 3. 获取 Tunnel URL
-
-```bash
-devtunnel host <tunnel-id>
-```
-
-记下输出的 URL（如 `https://xxxxx-3978.asse.devtunnels.ms`），然后 Ctrl+C 停止。
-
-### 4. 注册 Bot
-
-在 [Bot Framework Portal](https://dev.botframework.com/bots) 注册（需要 M365 开发者账号）：
-
-1. 点击 Create a bot
-2. 注册 Microsoft App ID（会跳转到 Azure Portal 创建 App registration）
-3. 记下 `Application (client) ID` 和创建一个 `Client secret`
-4. Messaging endpoint: `https://<your-tunnel-url>/api/messages`
-5. 添加 Teams channel
-
-### 5. 配置环境变量
-
-在项目根目录创建 `.localConfigs`：
-
-```
-PORT=3978
-CLIENT_ID=<your-bot-client-id>
-CLIENT_SECRET=<your-bot-client-secret>
-TENANT_ID=<your-tenant-id>
-```
-
-### 6. 上传 Teams App
-
-1. 编辑 `appPackage/manifest.json`，替换 `${{BOT_ID}}` 为你的 Client ID
-2. 将 `appPackage/` 目录打包为 zip
-3. 在 Teams 管理中心或 Teams 客户端中上传自定义 App
+> **注意**：必须用 `npm run start:teams` 启动，这个命令会自动加载 `.localConfigs` 的环境变量并启动 Dev Tunnel。直接用 `npm run dev` 启动不会加载配置文件。
 
 ## 每日使用
 
@@ -172,8 +196,6 @@ npm run disconnect
 
 如果你要离开电脑，可以退出终端（`/exit`），Teams 会完全接管。
 
-Teams 中发消息将使用终端的 Claude session，共享完整上下文。
-
 **取回到终端：**
 ```bash
 bash scripts/takeback.sh
@@ -191,8 +213,8 @@ claude --resume <session-id>
 | `/model` | 查看当前模型和可选列表 |
 | `/model <编号或名称>` | 切换模型 |
 | `/compact` | 压缩对话上下文 |
-| `/bind <session>` | 绑定到终端 Claude 会话 |
-| `/unbind` | 解除绑定 |
+| `/resume` | 列出本地 Claude Code 会话 |
+| `/resume <编号或ID>` | 绑定到指定 Claude 会话 |
 | `/diag` | 调试信息 |
 
 ## 工作原理
@@ -217,8 +239,8 @@ teambot/
 ├── session-store.ts      # 会话状态持久化
 ├── scripts/
 │   ├── setup.sh          # 一键安装
-│   ├── start.sh          # 启动 tunnel + Bot
-│   ├── stop.sh           # 停止所有进程
+│   ├── start.js          # 启动 tunnel + Bot
+│   ├── stop.js           # 停止所有进程
 │   ├── connect-teams.sh  # 连接终端镜像
 │   ├── disconnect-teams.sh # 断开镜像
 │   ├── handoff.sh        # 移交 session 给 Teams
@@ -232,14 +254,28 @@ teambot/
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `PORT` | Bot 端口 | `3978` |
+| `CLIENT_ID` | Bot App ID | 必填 |
+| `CLIENT_SECRET` | Bot App 密钥 | 必填 |
+| `TENANT_ID` | Azure AD 租户 ID | 必填 |
 | `CLAUDE_CLI_PATH` | Claude CLI 路径 | `claude` |
 | `CLAUDE_MODEL` | 模型 | `claude-opus-4-6-20250514` |
 | `CLAUDE_WORKING_DIR` | CLI 工作目录 | 当前目录 |
 | `CLAUDE_TIMEOUT_MS` | 超时（毫秒，0=无限制） | `300000` |
 | `CLAUDE_MAX_BUDGET_USD` | 单次最大费用（0=无限制） | `0` |
-| `CLAUDE_SKIP_PERMISSIONS` | 跳过权限确认 | `true` |
+| `CLAUDE_PERMISSION_MODE` | 权限模式（auto/acceptEdits/bypassPermissions） | `auto` |
 
 ## 常见问题
+
+**Q: 401 Authorization has been denied for this request？**
+
+最常见的原因是 `.localConfigs` 缺少 `TENANT_ID`。Bot 注册为 Single Tenant 类型时，SDK 必须用你的 Tenant ID 获取 token。检查 `.localConfigs` 确保 `CLIENT_ID`、`CLIENT_SECRET`、`TENANT_ID` 三个都有。
+
+**Q: listen EADDRINUSE: address already in use :::3978？**
+
+端口被占用，先停掉旧进程再启动：
+```bash
+npm run stop && npm run start:teams
+```
 
 **Q: Teams 发消息没有回复？**
 1. 检查 Bot 是否在运行：`curl http://localhost:3978/api/messages`
@@ -247,15 +283,19 @@ teambot/
 3. Tunnel 可能断了，运行 `npm run stop && npm run start:teams` 重启
 
 **Q: 回复很慢？**
+
 Teams 模式下有 2-5 秒延迟，是 Dev Tunnel 导致的，属于正常现象。
 
 **Q: Handoff 后 Teams 报错？**
+
 不要同时从终端和 Teams 发消息。等一边回复完再从另一边发。如果冲突了，运行 `npm run stop && npm run start:teams` 重启。
 
 **Q: 如何切换模型？**
+
 在 Teams 中发送 `/model` 查看列表，`/model 2` 切换。
 
 **Q: Tunnel 过期了？**
+
 Dev Tunnel 有时效限制，过期后需要重新创建：
 ```bash
 devtunnel create --allow-anonymous

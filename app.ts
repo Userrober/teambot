@@ -57,7 +57,7 @@ const claudeBridge = new ClaudeCodeBridge({
   timeoutMs: config.ClaudeTimeoutMs,
   maxBudgetUsd: config.ClaudeMaxBudgetUsd,
   bare: config.ClaudeBare,
-  skipPermissions: config.ClaudeSkipPermissions,
+  permissionMode: config.ClaudePermissionMode,
   systemPrompt: config.ClaudeSystemPrompt,
 }, sessionStore);
 
@@ -154,8 +154,7 @@ app.on("message", async (context) => {
       "Claude Code Bot — bridges Claude Code CLI to Teams.\n\n" +
       "Commands:\n" +
       "- /help — Show this help\n" +
-      "- /bind — List terminal sessions / bind to a terminal's Claude session\n" +
-      "- /unbind — Unbind and start independent session\n" +
+      "- /resume — List terminal sessions / bind to a terminal's Claude session\n" +
       "- /reset — Reset Claude session (start fresh)\n" +
       "- /status — Show current session status\n" +
       "- /model <name> — Switch model (e.g. /model opus, /model sonnet)\n" +
@@ -248,45 +247,45 @@ app.on("message", async (context) => {
     return;
   }
 
-  if (text.startsWith("/bind")) {
-    const target = text.replace("/bind", "").trim();
+  if (text.startsWith("/resume")) {
+    const target = text.replace("/resume", "").trim();
     if (!target) {
-      // List available terminal sessions
-      const threads = sessionStore.getAllThreads();
-      if (threads.length === 0) {
-        await context.send("No terminal sessions available. Run `bash scripts/connect-teams.sh <name>` in a terminal first.");
+      // List all local Claude Code sessions
+      const sessions = claudeBridge.listLocalSessions();
+      if (sessions.length === 0) {
+        await context.send("No Claude Code sessions found.");
       } else {
-        const lines = threads.map(t => {
-          const csid = sessionStore.getTerminalClaudeSessionId(t.sessionId);
-          return `- ${t.sessionId}${csid ? ` (claude: ${csid.slice(0, 8)}...)` : " (no claude session yet)"}`;
-        });
+        const lines = sessions.map((s, i) =>
+          `${i + 1}. \`${s.id}\` — ${s.date} — ${s.messageCount} msgs${s.preview ? ` — ${s.preview}` : ""}`
+        );
         await context.send(
-          "Available terminal sessions:\n" + lines.join("\n") +
-          "\n\nUsage: /bind <session_name>\nExample: /bind task-1"
+          "Local Claude Code sessions:\n" + lines.join("\n") +
+          "\n\nUsage: /resume <number or session_id>\nExample: /resume 1"
         );
       }
     } else {
-      const thread = sessionStore.getThread(target);
-      if (!thread) {
-        await context.send(`Terminal session "${target}" not found. Send /bind to see available sessions.`);
-      } else {
-        const claudeId = sessionStore.getTerminalClaudeSessionId(target);
-        if (!claudeId) {
-          await context.send(`Terminal "${target}" is registered but hasn't sent any Claude messages yet. Send a message in the terminal first.`);
-        } else {
-          // Bind this Teams conversation to the terminal's Claude session
-          sessionStore.setClaudeSessionId(conversationId, claudeId);
-          claudeBridge.bindSession(conversationId, claudeId);
-          await context.send(`Bound to terminal [${target}] (claude session: ${claudeId.slice(0, 8)}...)\nYour messages now share the same Claude context as that terminal.`);
+      // Match by number or session ID
+      let sessionId = target;
+      const num = parseInt(target);
+      if (num >= 1) {
+        const sessions = claudeBridge.listLocalSessions();
+        if (num <= sessions.length) {
+          sessionId = sessions[num - 1].id;
         }
       }
+      // Also check terminal sessions
+      const thread = sessionStore.getThread(target);
+      if (thread) {
+        const claudeId = sessionStore.getTerminalClaudeSessionId(target);
+        if (claudeId) {
+          sessionId = claudeId;
+        }
+      }
+      // Bind to the session
+      sessionStore.setClaudeSessionId(conversationId, sessionId);
+      claudeBridge.bindSession(conversationId, sessionId);
+      await context.send(`Resumed session \`${sessionId}\`\nYour messages now continue this Claude conversation.`);
     }
-    return;
-  }
-
-  if (text === "/unbind") {
-    claudeBridge.resetSession(conversationId);
-    await context.send("Unbound. Next message will start a new independent Claude session.");
     return;
   }
 
@@ -327,7 +326,7 @@ app.server.registerRoute("POST", "/api/register", async (req) => {
       logToFile("Register", `Session ${sessionId} registered`);
     }
 
-    // Save terminal's Claude session ID (for /bind command)
+    // Save terminal's Claude session ID (for /resume command)
     if (claudeSessionId) {
       sessionStore.setTerminalClaudeSessionId(sessionId, claudeSessionId);
     }
@@ -356,7 +355,7 @@ app.server.registerRoute("POST", "/api/push", async (req) => {
 
     logToFile("Push", `[${sessionId}] ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}`);
 
-    // Save terminal's Claude session ID if provided (for /bind)
+    // Save terminal's Claude session ID if provided (for /resume)
     const claudeSessionId = body?.claude_session_id;
     if (claudeSessionId) {
       sessionStore.setTerminalClaudeSessionId(sessionId, claudeSessionId);

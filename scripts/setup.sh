@@ -65,7 +65,9 @@ if [ -f "$SETTINGS_FILE" ]; then
   # Merge hooks into existing settings
   node -e "
     const fs = require('fs');
-    const settings = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf8'));
+    const path = require('path');
+    const settingsFile = path.join(process.env.HOME || process.env.USERPROFILE, '.claude', 'settings.json');
+    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
 
     const stopHook = {
       matcher: '',
@@ -95,13 +97,15 @@ if [ -f "$SETTINGS_FILE" ]; then
       settings.hooks.UserPromptSubmit.push(promptHook);
     }
 
-    fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
     console.log('  Hooks registered in settings.json');
   "
 else
   # Create new settings file with hooks
   node -e "
     const fs = require('fs');
+    const path = require('path');
+    const settingsFile = path.join(process.env.HOME || process.env.USERPROFILE, '.claude', 'settings.json');
     const settings = {
       hooks: {
         Stop: [{
@@ -114,7 +118,7 @@ else
         }]
       }
     };
-    fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
     console.log('  Created settings.json with hooks');
   "
 fi

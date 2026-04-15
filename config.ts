@@ -11,7 +11,7 @@ const config = {
   ClaudeTimeoutMs: parseInt(process.env.CLAUDE_TIMEOUT_MS || "300000"),
   ClaudeMaxBudgetUsd: parseFloat(process.env.CLAUDE_MAX_BUDGET_USD || "0"),
   ClaudeBare: process.env.CLAUDE_BARE === "true",
-  ClaudeSkipPermissions: process.env.CLAUDE_SKIP_PERMISSIONS !== "false",
+  ClaudePermissionMode: process.env.CLAUDE_PERMISSION_MODE || "auto",
   ClaudeSystemPrompt: process.env.CLAUDE_SYSTEM_PROMPT,
 };
 

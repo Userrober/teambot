@@ -26,7 +26,7 @@ export interface ClaudeBridgeConfig {
   bare: boolean;
   systemPrompt?: string;
   allowedTools?: string[];
-  skipPermissions: boolean;
+  permissionMode: string;
 }
 
 export interface ConversationSession {
