@@ -7,6 +7,7 @@
     "main": "./dist/index.js",
     "scripts": {
         "setup": "bash scripts/setup.sh",
+        "provision": "node scripts/provision.js",
         "start:teams": "node scripts/start.js",
         "stop": "node scripts/stop.js",
         "connect": "bash scripts/connect-teams.sh",

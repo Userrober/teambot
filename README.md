@@ -116,15 +116,35 @@ npm run setup
 - 构建 TypeScript
 - 配置 Claude Code hooks（用于终端镜像）
 
-### 第二步：一键配置（Dev Tunnel + Bot 注册 + 打包）
+### 第二步：一键配置
 
-运行配置向导，它会引导你完成所有一次性设置：
+有两种方式，选一种即可：
+
+#### 方式 A：自动配置（推荐）
+
+使用 M365 Agents Toolkit CLI 全自动完成 Bot 注册、凭证生成、App 打包和上传：
+
+```bash
+npm run provision
+```
+
+脚本会自动：
+1. 检查并安装 M365 Agents Toolkit CLI
+2. 打开浏览器登录 Microsoft 365 账号
+3. 自动注册 Bot（生成 CLIENT_ID + CLIENT_SECRET + TENANT_ID）
+4. 打包 Teams App 并上传到 Teams
+
+全程不需要手动去网页操作，也不需要复制粘贴任何凭证。
+
+#### 方式 B：手动配置
+
+如果自动配置失败，可以用交互式向导手动完成：
 
 ```bash
 node scripts/configure.js
 ```
 
-向导会自动引导你完成：
+向导会引导你：
 1. **检测/创建 Dev Tunnel** — 自动获取 tunnel URL
 2. **打开 Teams Developer Portal** — 引导你注册 Bot、创建 Client Secret
 3. **打开 Bot Framework Portal** — 引导你获取 Tenant ID
@@ -136,6 +156,9 @@ node scripts/configure.js
 
 ### 第三步：上传 Teams App
 
+如果使用方式 A（自动配置），App 已自动上传，跳过此步。
+
+如果使用方式 B（手动配置），需要手动上传：
 1. 打开 Teams → 应用 → 管理你的应用 → 上传自定义应用
 2. 选择 `appPackage/build/appPackage.zip`
 3. 安装到个人或团队

@@ -80,7 +80,10 @@ npm run build
 # One-time setup (install deps, build, configure hooks)
 npm run setup
 
-# Interactive configuration wizard (Dev Tunnel + Bot registration + packaging)
+# One-command provision (auto register bot, generate credentials, package app)
+npm run provision
+
+# Manual configuration wizard (alternative to provision)
 node scripts/configure.js
 
 # Start bot with Teams (loads .localConfigs, starts Dev Tunnel)
