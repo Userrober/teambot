@@ -1,8 +1,21 @@
+import * as fs from "fs";
+import * as path from "path";
+
+// Load saved config from ~/.teambot/config.json if available
+const HOME = process.env.HOME || process.env.USERPROFILE || "";
+const TEAMBOT_CONFIG = path.join(HOME, ".teambot", "config.json");
+let savedConfig: { botId?: string; clientSecret?: string; tenantId?: string } = {};
+try {
+  if (fs.existsSync(TEAMBOT_CONFIG)) {
+    savedConfig = JSON.parse(fs.readFileSync(TEAMBOT_CONFIG, "utf8"));
+  }
+} catch {}
+
 const config = {
-  MicrosoftAppId: process.env.CLIENT_ID,
+  MicrosoftAppId: process.env.CLIENT_ID || savedConfig.botId,
   MicrosoftAppType: process.env.BOT_TYPE,
-  MicrosoftAppTenantId: process.env.TENANT_ID,
-  MicrosoftAppPassword: process.env.CLIENT_PASSWORD,
+  MicrosoftAppTenantId: process.env.TENANT_ID || savedConfig.tenantId,
+  MicrosoftAppPassword: process.env.CLIENT_PASSWORD || savedConfig.clientSecret,
 
   // Claude Code Bridge
   ClaudeCliPath: process.env.CLAUDE_CLI_PATH || (process.platform === "win32" ? "claude.cmd" : "claude"),

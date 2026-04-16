@@ -10,7 +10,7 @@ import * as path from "path";
 import * as http from "http";
 import * as https from "https";
 
-const LOG_FILE = path.join(__dirname, "teams-messages.log");
+const LOG_FILE = path.join(process.env.TEAMBOT_DATA_DIR || __dirname, "teams-messages.log");
 
 function logToFile(tag: string, content: string) {
   const timestamp = new Date().toLocaleTimeString();
