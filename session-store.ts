@@ -1,8 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
 
-const STATE_FILE = path.join(__dirname, "bot-state.json");
-const INBOX_DIR = path.join(__dirname, "inbox");
+const DATA_DIR = process.env.TEAMBOT_DATA_DIR || __dirname;
+const STATE_FILE = path.join(DATA_DIR, "bot-state.json");
+const INBOX_DIR = path.join(DATA_DIR, "inbox");
 
 interface ThreadBinding {
   sessionId: string;
