@@ -1,327 +1,267 @@
-# TeamBot — Claude Code x Teams Bridge
+# ClaudeBot — Claude Code in Microsoft Teams
 
-在 Microsoft Teams 中与 Claude Code 交互。手机上发消息就能控制电脑上的 Claude Code 写代码。
+在 Microsoft Teams 中跟你电脑上的 Claude Code 聊天。手机、平板、任何设备都能用。
+
+云端 bot 永久在线（Render 免费层），关电脑也能收消息——只要客户端在跑就行。
+
+```
+┌─────────────┐   云端 bot    ┌──────────────┐    本地 client    ┌─────────────┐
+│   Teams     │ ─────────────→│ Render bot   │ ←───WebSocket───→ │ Your laptop │
+│ (手机/电脑) │               │ (永久在线)   │                   │ Claude Code │
+└─────────────┘               └──────────────┘                   └─────────────┘
+                                      ↓
+                              ┌──────────────┐
+                              │ Upstash Redis│  (持久化配对/会话)
+                              └──────────────┘
+```
+
+---
+
+## 三步上手
+
+### 1. 装客户端
+
+```bash
+npm install -g claude-teams-client --registry=https://registry.npmjs.org/
+```
+
+> 公司内网默认走 MS 私有 registry，必须加 `--registry=https://registry.npmjs.org/`。
+
+### 2. 启动客户端
+
+```bash
+claude-teams-client
+```
+
+启动后会显示一个 token，例如：
+
+```
+┌───────────────────────────────────────────────────────────────
+│  Claude Teams Client
+│  Token:    2ac42715-b623-4c0f-b4a8-d9b4f22f401b
+│  Bot URL:  wss://teambot-mih3.onrender.com/ws
+│
+│  In Teams, send this command once to bind your account:
+│    /pair 2ac42715-b623-4c0f-b4a8-d9b4f22f401b
+│
+│  After pairing, just keep this client running.
+└───────────────────────────────────────────────────────────────
+[client] mirror endpoint: http://127.0.0.1:47291/mirror
+[client] connecting to wss://teambot-mih3.onrender.com/ws...
+[client] connected, sending hello (token=2ac42715...)
+```
+
+让这个 terminal 一直开着。
+
+### 3. 在 Teams 里配对（只做一次）
+
+a. 安装 ClaudeBot 应用：在 Teams 里 **Apps → Manage your apps → Upload an app → Upload a custom app**，选 `appPackage/build/appPackage.teams.zip`
+
+b. 打开 ClaudeBot 聊天，发送：
+```
+/pair 2ac42715-b623-4c0f-b4a8-d9b4f22f401b
+```
+（把 token 换成你自己的）
+
+完成。**配对永久存在 Redis，重启 bot/client 都不用重 pair**。
+
+---
 
 ## 两种使用场景
 
-### 场景一：终端镜像（Terminal → Teams 推送）
+### 场景一：Teams → 电脑（在 Teams 里指挥 Claude）
 
-在电脑终端使用 Claude Code 时，对话内容实时同步到 Teams。适合离开电脑后用手机查看 Claude 的工作进度。
+最常用。任何设备打开 Teams 给 ClaudeBot 发消息，消息走云端 bot 转发到你电脑上的 client，由本地 Claude Code 处理后回 Teams。
+
+```
+你在 Teams 输入：帮我看看 app.ts 第 100 行有什么问题
+                ↓
+            （走云端）
+                ↓
+你电脑上的 client 收到 → 调用本地 claude → Claude 阅读文件并分析
+                ↓
+            （走云端）
+                ↓
+Teams 收到 Claude 的回复
+```
+
+#### 常用命令
+
+| 命令 | 作用 |
+|---|---|
+| 任意文本 | 发给 Claude |
+| `/whoami` | 查看当前配对状态 |
+| `/pair <token>` | 绑定客户端（首次） |
+| `/unpair` | 解除绑定 |
+| `/status` | 查看 Claude 当前会话信息（消息数、成本等） |
+| `/model` | 列出可用模型 |
+| `/model <编号>` | 切换模型 |
+| `/reset` | 清空当前会话 |
+| `/compact` | 压缩上下文（节省 token） |
+| `/resume` | 列出本地所有 Claude 会话 |
+| `/resume <编号>` | 接管本地某个会话 |
+| `/help` | 查看帮助 |
+
+### 场景二：电脑 → Teams（镜像模式）
+
+你**坐在电脑前直接用 Claude Code** 时，每轮对话自动同步到 Teams。出门后用手机就能看到刚才的进度，无缝接力。
+
+#### 启用镜像
+
+镜像按**目录**控制（白名单），避免把所有 Claude 进程都推到 Teams 干扰。
 
 ```bash
-# 在终端启动镜像
-npm run connect
-
-# 之后在终端正常使用 Claude Code，所有对话自动推送到 Teams
-claude
-> 帮我写一个登录页面
-# → Teams 上实时看到 Claude 的回复
-
-# 停止镜像
-npm run disconnect
+cd /your/project
+claude-teams-client mirror-on
+# ✓ Mirror enabled for: /your/project
 ```
 
-启动后终端的每一轮对话（你的提问 + Claude 的回复）都会自动出现在 Teams 的 Bot 聊天里。
+子目录自动包含。在该目录及任何子目录里跑 `claude` 都会推送。
 
-### 场景二：Session 共享（Teams ↔ Terminal）
+#### 镜像效果
 
-在 Teams 中直接接管终端的 Claude Code 会话，共享完整上下文。适合在手机上继续电脑上的工作。
-
-**方式 A：在 Teams 中选择本地 session**
-
+电脑终端：
 ```
-# 在 Teams 发送，列出电脑上所有 Claude Code 会话：
-/resume
-
-# Bot 返回：
-# 1. `209ddf7d-da21-461a-bba9-b29dc933d32e` — 04/15 14:35 — 12 msgs — 帮我写一个登录页面
-# 2. `a1b2c3d4-e5f6-7890-abcd-ef1234567890` — 04/15 10:20 — 5 msgs — Fix the API endpoint
-
-# 按编号选择：
-/resume 1
-
-# 或用完整 session ID：
-/resume 209ddf7d-da21-461a-bba9-b29dc933d32e
-
-# 绑定后，Teams 发消息就和终端共享同一个 Claude 上下文
-你好，继续刚才的工作，把登录页面加上表单验证
-# → Claude 能看到之前终端里的完整对话历史
+$ cd /your/project
+$ claude
+> 1+1=?
+2
 ```
 
-**方式 B：从终端 Handoff 给 Teams**
+Teams 里同步收到：
+```
+[mirror] [3a7b9c12] [user] 1+1=?
+[mirror] [3a7b9c12] [claude] 2
+```
+
+`[3a7b9c12]` 是 Claude session ID 前 8 位。**同一目录开多个终端**时，这个前缀帮你区分哪个回复属于哪个 terminal。
+
+#### 镜像管理命令
 
 ```bash
-# 在 Claude Code 终端中执行：
-! bash scripts/handoff.sh
-
-# 之后可以退出终端，Teams 完全接管
-# 在 Teams 里继续发消息即可
+claude-teams-client mirror-on    # 启用当前目录
+claude-teams-client mirror-off   # 禁用当前目录
+claude-teams-client mirror-list  # 查看所有启用的目录
 ```
 
-**取回到终端：**
+白名单存在 `~/.claude-teams-client/mirror-cwds.json`。
+
+#### 镜像 hooks 安装
+
+镜像需要 Claude Code 的 hooks 配合。在 `~/.claude/settings.json` 加：
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "bash ~/.claude/hooks/push-prompt-to-teams.sh", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "bash ~/.claude/hooks/push-to-teams.sh", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`push-prompt-to-teams.sh` 和 `push-to-teams.sh` 在本仓库 `scripts/hooks/` 下，复制到 `~/.claude/hooks/` 即可。
+
+---
+
+## 客户端命令速查
 
 ```bash
-bash scripts/takeback.sh
-claude --resume <session-id>
+claude-teams-client              # 启动客户端（默认）
+claude-teams-client status       # 查看当前配置
+claude-teams-client mirror-on    # 启用镜像（当前目录）
+claude-teams-client mirror-off   # 禁用镜像
+claude-teams-client mirror-list  # 列出镜像目录
+claude-teams-client reset-token  # 重新生成 token（需重新 /pair）
+claude-teams-client help         # 帮助
 ```
 
-**其他常用 Teams 命令：**
+#### 环境变量
 
-```
-/status    # 查看当前 session 信息（ID、消息数、费用、最后活动时间）
-/model     # 查看/切换模型（如 /model opus, /model 2）
-/compact   # 压缩上下文，减少 token 占用
-/reset     # 重置会话，开始全新对话
-/help      # 显示所有命令
-```
+| 变量 | 用途 | 默认 |
+|---|---|---|
+| `BOT_WS_URL` | bot WebSocket 地址 | `wss://teambot-mih3.onrender.com/ws` |
+| `CLAUDE_CLI_PATH` | claude 可执行文件路径 | `claude.cmd`(win) / `claude` |
+| `CLAUDE_MODEL` | 默认模型 | `claude-opus-4-6-20250514` |
+| `CLAUDE_WORKING_DIR` | Claude 工作目录 | `cwd` |
+| `CLAUDE_TIMEOUT_MS` | 单条消息超时 | `300000` |
+| `CLAUDE_PERMISSION_MODE` | `auto` / `acceptEdits` / `bypassPermissions` | `auto` |
+| `MIRROR_PORT` | 本地 mirror 端口 | `47291` |
 
-## 功能
+---
 
-- **Teams 对话** — 在 Teams 中直接与 Claude 对话，Claude 可以读写代码、执行命令
-- **终端镜像** — 终端中与 Claude Code 的对话实时同步到 Teams
-- **Session 共享** — 通过 handoff/takeback 在终端和 Teams 间切换同一个 Claude 会话
-- **命令系统** — `/help` `/reset` `/status` `/model` `/compact` 等
+## 注意事项
 
-## 前置条件
+- **冷启动 ~30 秒**：Render 免费层 15 分钟无请求会休眠，第一条消息可能 timeout。再发一条就好。
+- **单租户限制**：bot 注册在 `0xw71` 开发者租户，目前**只有该租户用户能用**。外部公司同事接入需要升级 multi-tenant。
+- **不要同时跑两个 client**：同一 token 同时连两个 client 会被互相 kick。
+- **Mirror 不在白名单的目录不推**：bot 触发的 Claude 默认不会被镜像（避免循环），只有你 `mirror-on` 过的目录才会推。
 
-在开始之前，确保你有以下工具和账号：
+---
 
-- [Git for Windows](https://git-scm.com/download/win)（包含 Git Bash，脚本需要 bash 环境）
-- [Node.js](https://nodejs.org/) 20+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-  ```bash
-  npm install -g @anthropic-ai/claude-code
-  ```
-- 有效的 Claude API 密钥（已在 Claude Code 中配置）
-- [Dev Tunnel CLI](https://learn.microsoft.com/azure/developer/dev-tunnels/)
-  ```bash
-  winget install Microsoft.devtunnel
-  ```
-- Microsoft 365 账号（有 Teams 权限）
-  > **注意**：企业内部账号（如 intern 账号）可能没有在 [Teams Developer Portal](https://dev.teams.microsoft.com/) 注册 Bot 的权限。实测 [M365 开发者账号](https://developer.microsoft.com/microsoft-365/dev-program)（免费申请）可以成功注册。
+## 给开发者：自部署 / 改代码
 
-## 完整搭建流程
-
-### 第一步：克隆并安装
-
-```bash
-git clone https://github.com/Userrober/teambot.git
-cd teambot
-npm run setup
-```
-
-`npm run setup` 会自动完成：
-- 检查前置条件（Node.js、Claude CLI、Dev Tunnel）
-- 安装项目依赖
-- 构建 TypeScript
-- 配置 Claude Code hooks（用于终端镜像）
-
-### 第二步：一键配置
-
-有两种方式，选一种即可：
-
-#### 方式 A：自动配置（推荐）
-
-使用 M365 Agents Toolkit CLI 全自动完成 Bot 注册、凭证生成、App 打包和上传：
-
-```bash
-npm run provision
-```
-
-脚本会自动：
-1. 检查并安装 M365 Agents Toolkit CLI
-2. 打开浏览器登录 Microsoft 365 账号
-3. 自动注册 Bot（生成 CLIENT_ID + CLIENT_SECRET + TENANT_ID）
-4. 打包 Teams App 并上传到 Teams
-
-全程不需要手动去网页操作，也不需要复制粘贴任何凭证。
-
-#### 方式 B：手动配置
-
-如果自动配置失败，可以用交互式向导手动完成：
-
-```bash
-node scripts/configure.js
-```
-
-向导会引导你：
-1. **检测/创建 Dev Tunnel** — 自动获取 tunnel URL
-2. **打开 Teams Developer Portal** — 引导你注册 Bot、创建 Client Secret
-3. **打开 Bot Framework Portal** — 引导你获取 Tenant ID
-4. **填写凭证** — 输入 CLIENT_ID、CLIENT_SECRET、TENANT_ID
-5. **生成配置文件** — 自动创建 `.localConfigs`
-6. **打包 Teams App** — 自动生成 `appPackage/build/appPackage.zip`
-
-> **需要拿到的三个值**：`CLIENT_ID`（Bot ID，创建 Bot 时自动生成）、`CLIENT_SECRET`（在 Bot 页面的 Client secrets 中手动创建，只显示一次）、`TENANT_ID`（在 [Bot Framework Portal](https://dev.botframework.com/bots) → Bot Settings 中的 App Tenant ID）。缺少任何一个都会导致 401 错误。
-
-### 第三步：上传 Teams App
-
-如果使用方式 A（自动配置），App 已自动上传，跳过此步。
-
-如果使用方式 B（手动配置），需要手动上传：
-1. 打开 Teams → 应用 → 管理你的应用 → 上传自定义应用
-2. 选择 `appPackage/build/appPackage.zip`
-3. 安装到个人或团队
-
-### 第四步：启动并测试
-
-```bash
-npm run start:teams
-```
-
-在 Teams 中找到你的 Bot，发一条消息。如果一切正常，Claude 会回复。
-
-> **注意**：必须用 `npm run start:teams` 启动，这个命令会自动加载 `.localConfigs` 的环境变量并启动 Dev Tunnel。直接用 `npm run dev` 启动不会加载配置文件。
-
-## 每日使用
-
-### 启动
-
-```bash
-npm run start:teams
-```
-
-自动启动 Dev Tunnel 和 Bot 服务。然后在 Teams 中找到你的 Bot 发消息即可。
-
-### 停止
-
-```bash
-npm run stop
-```
-
-### 终端镜像
-
-在 Claude Code 终端中执行：
-
-```bash
-npm run connect
-```
-
-终端中与 Claude 的对话会自动同步到 Teams。
-
-停止镜像：
-
-```bash
-npm run disconnect
-```
-
-### Session 共享（Handoff/Takeback）
-
-让 Teams 和终端共享同一个 Claude 上下文。共享后在 Teams 发消息，Claude 能看到终端的完整对话历史。
-
-**共享给 Teams：**
-```bash
-# 在 Claude Code 终端中执行
-! bash scripts/handoff.sh
-```
-
-共享后终端和 Teams 都可以使用，但不要同时发消息（避免 session 冲突）。
-
-如果你要离开电脑，可以退出终端（`/exit`），Teams 会完全接管。
-
-**取回到终端：**
-```bash
-bash scripts/takeback.sh
-# 然后恢复终端
-claude --resume <session-id>
-```
-
-## Teams 命令
-
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助信息 |
-| `/reset` | 重置 Claude 会话 |
-| `/status` | 显示当前会话状态 |
-| `/model` | 查看当前模型和可选列表 |
-| `/model <编号或名称>` | 切换模型 |
-| `/compact` | 压缩对话上下文 |
-| `/resume` | 列出本地 Claude Code 会话 |
-| `/resume <编号或ID>` | 绑定到指定 Claude 会话 |
-| `/diag` | 调试信息 |
-
-## 工作原理
-
-```
-Teams 用户发消息 → Bot 收到 → 调用 claude -p CLI → Claude 回复 → Bot 发回 Teams
-```
-
-每次消息使用 `claude -p --resume <sessionId>` 保持会话连续。
-
-终端镜像通过 Claude Code hooks（Stop / UserPromptSubmit）将终端对话推送到 Bot，再转发到 Teams。
-
-## 项目结构
+### 项目结构
 
 ```
 teambot/
-├── index.ts              # 入口
-├── app.ts                # Bot 主逻辑
-├── claude-bridge.ts      # Claude CLI 进程管理
-├── claude-types.ts       # TypeScript 类型
-├── config.ts             # 环境变量配置
-├── session-store.ts      # 会话状态持久化
-├── scripts/
-│   ├── setup.sh          # 一键安装
-│   ├── start.js          # 启动 tunnel + Bot
-│   ├── stop.js           # 停止所有进程
-│   ├── connect-teams.sh  # 连接终端镜像
-│   ├── disconnect-teams.sh # 断开镜像
-│   ├── handoff.sh        # 移交 session 给 Teams
-│   └── takeback.sh       # 取回 session 到终端
-├── appPackage/           # Teams App 打包
-└── infra/                # Azure 部署模板（可选）
+├── app.ts                  # Bot 主逻辑（Teams 消息处理 + WebSocket 中继）
+├── ws-hub.ts               # WebSocket server（多 client 路由）
+├── pairing-store.ts        # AAD ↔ token ↔ conversation 三向映射（Redis 持久化）
+├── index.ts                # 入口
+├── packages/client/        # 客户端 npm 包源码
+│   └── src/
+│       ├── cli.ts          # CLI 入口
+│       ├── daemon.ts       # WS daemon + mirror HTTP 端点
+│       └── claude-bridge.ts# 调用本地 claude CLI
+└── appPackage/             # Teams app 清单
 ```
 
-## 环境变量
+### 部署到 Render
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `PORT` | Bot 端口 | `3978` |
-| `CLIENT_ID` | Bot App ID | 必填 |
-| `CLIENT_SECRET` | Bot App 密钥 | 必填 |
-| `TENANT_ID` | Azure AD 租户 ID | 必填 |
-| `CLAUDE_CLI_PATH` | Claude CLI 路径 | `claude` |
-| `CLAUDE_MODEL` | 模型 | `claude-opus-4-6-20250514` |
-| `CLAUDE_WORKING_DIR` | CLI 工作目录 | 当前目录 |
-| `CLAUDE_TIMEOUT_MS` | 超时（毫秒，0=无限制） | `300000` |
-| `CLAUDE_MAX_BUDGET_USD` | 单次最大费用（0=无限制） | `0` |
-| `CLAUDE_PERMISSION_MODE` | 权限模式（auto/acceptEdits/bypassPermissions） | `auto` |
+1. Fork 本仓库到你的 GitHub
+2. Render → New Web Service → Connect repo
+3. 设置：
+   - Build: `npm install && npm run build`
+   - Start: `node ./dist/index.js`
+   - Region: 推荐 Singapore
+4. 环境变量：
+   - `CLIENT_ID`, `CLIENT_SECRET`, `TENANT_ID`（你的 Bot Framework 注册）
+   - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`（持久化）
+   - `NODE_VERSION=22`
+5. 在 Bot Framework Portal 把 messaging endpoint 改为 `https://你的服务.onrender.com/api/messages`
 
-## 常见问题
+### 本地开发
 
-**Q: 401 Authorization has been denied for this request？**
-
-最常见的原因是 `.localConfigs` 缺少 `TENANT_ID`。Bot 注册为 Single Tenant 类型时，SDK 必须用你的 Tenant ID 获取 token。检查 `.localConfigs` 确保 `CLIENT_ID`、`CLIENT_SECRET`、`TENANT_ID` 三个都有。
-
-**Q: listen EADDRINUSE: address already in use :::3978？**
-
-端口被占用，先停掉旧进程再启动：
 ```bash
-npm run stop && npm run start:teams
+npm install
+npm run build
+npm run dev          # 端口 3978，调试 9239
 ```
 
-**Q: Teams 发消息没有回复？**
-1. 检查 Bot 是否在运行：`curl http://localhost:3978/api/messages`
-2. 检查 Dev Tunnel 是否连通：查看 `.tunnel.log`
-3. Tunnel 可能断了，运行 `npm run stop && npm run start:teams` 重启
+或一键配置（自动注册 Teams app + bot）：
 
-**Q: 回复很慢？**
-
-Teams 模式下有 2-5 秒延迟，是 Dev Tunnel 导致的，属于正常现象。
-
-**Q: Handoff 后 Teams 报错？**
-
-不要同时从终端和 Teams 发消息。等一边回复完再从另一边发。如果冲突了，运行 `npm run stop && npm run start:teams` 重启。
-
-**Q: 如何切换模型？**
-
-在 Teams 中发送 `/model` 查看列表，`/model 2` 切换。
-
-**Q: Tunnel 过期了？**
-
-Dev Tunnel 有时效限制，过期后需要重新创建：
 ```bash
-devtunnel create --allow-anonymous
-devtunnel port create -p 3978
+npm run provision    # 调用 atk CLI 完成所有注册步骤
 ```
-然后更新 Bot Framework 中的 messaging endpoint。
+
+---
+
+## 当前状态
+
+- Bot: `https://teambot-mih3.onrender.com`
+- npm: [`claude-teams-client@0.6.0`](https://www.npmjs.com/package/claude-teams-client)
+- GitHub: `Userrober/teambot`
