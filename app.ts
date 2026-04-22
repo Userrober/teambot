@@ -63,12 +63,11 @@ const WS_PATH = process.env.WS_PATH || "/ws";
 wsHub.attach(httpServer, WS_PATH);
 
 let lastServiceUrl: string | null = null;
-const aadToConversation: Map<string, string> = new Map();
 
 wsHub.setMirrorHandler((token, text) => {
   const aadObjectId = pairingStore.aadFor(token);
   if (!aadObjectId) return;
-  const conversationId = aadToConversation.get(aadObjectId);
+  const conversationId = pairingStore.conversationFor(aadObjectId);
   if (!conversationId) return;
   const fullText = `[mirror] ${text}`;
   if (fullText.length > 25000) {
@@ -160,7 +159,7 @@ app.on("message", async (context) => {
     sessionStore.setConnectorUrl(activity.serviceUrl);
   }
   if (aadObjectId) {
-    aadToConversation.set(aadObjectId, conversationId);
+    pairingStore.setConversation(aadObjectId, conversationId);
   }
   sessionStore.setChannelConversationId(conversationId);
 
