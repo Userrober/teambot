@@ -2,7 +2,7 @@
 import { loadOrCreateConfig, updateConfig, resetToken, configPath } from "./config";
 import { runDaemon } from "./daemon";
 
-const DEFAULT_BOT_URL = "ws://localhost:3978/ws";
+const DEFAULT_BOT_URL = "wss://teambot-mih3.onrender.com/ws";
 
 function printBanner(token: string, botUrl: string): void {
   const line = "─".repeat(63);
