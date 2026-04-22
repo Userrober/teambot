@@ -99,15 +99,21 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
-function ensureHookEntry(list: HookEntry[] | undefined, command: string): { list: HookEntry[]; changed: boolean } {
-  const arr = list ? [...list] : [];
-  for (const entry of arr) {
-    for (const h of entry.hooks || []) {
-      if (h.command === command) return { list: arr, changed: false };
-    }
+function ensureHookEntry(
+  list: HookEntry[] | undefined,
+  scriptBasename: string,
+  desiredCommand: string,
+): { list: HookEntry[]; changed: boolean } {
+  const original = list || [];
+  // Strip any existing entry referencing this script (any path form).
+  const cleaned: HookEntry[] = [];
+  for (const entry of original) {
+    const remaining = (entry.hooks || []).filter((h) => !h.command.includes(scriptBasename));
+    if (remaining.length > 0) cleaned.push({ ...entry, hooks: remaining });
   }
-  arr.push({ matcher: "", hooks: [{ type: "command", command, timeout: 10 }] });
-  return { list: arr, changed: true };
+  cleaned.push({ matcher: "", hooks: [{ type: "command", command: desiredCommand, timeout: 10 }] });
+  const changed = JSON.stringify(original) !== JSON.stringify(cleaned);
+  return { list: cleaned, changed };
 }
 
 export interface InstallResult {
@@ -153,8 +159,8 @@ export function installHooks(): InstallResult {
   const promptCmd = `bash ${PROMPT_HOOK.replace(/\\/g, "/")}`;
   const stopCmd = `bash ${STOP_HOOK.replace(/\\/g, "/")}`;
 
-  const promptResult = ensureHookEntry(settings.hooks.UserPromptSubmit, promptCmd);
-  const stopResult = ensureHookEntry(settings.hooks.Stop, stopCmd);
+  const promptResult = ensureHookEntry(settings.hooks.UserPromptSubmit, "push-prompt-to-teams.sh", promptCmd);
+  const stopResult = ensureHookEntry(settings.hooks.Stop, "push-to-teams.sh", stopCmd);
 
   if (promptResult.changed) {
     settings.hooks.UserPromptSubmit = promptResult.list;
