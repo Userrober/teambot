@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import * as http from "http";
 import { loadOrCreateConfig, updateConfig, resetToken, configPath } from "./config";
 import { runDaemon } from "./daemon";
 
 const DEFAULT_BOT_URL = "wss://teambot-mih3.onrender.com/ws";
+const DEFAULT_MIRROR_PORT = 47291;
 
 function printBanner(token: string, botUrl: string): void {
   const line = "─".repeat(63);
@@ -27,6 +29,7 @@ Usage:
   claude-teams-client status               Print current config
   claude-teams-client config --bot-url URL Set the bot WebSocket URL
   claude-teams-client reset-token          Generate a new token (requires re-pairing)
+  claude-teams-client mirror --text MSG    Push text to Teams (used by Claude hooks)
   claude-teams-client help                 Show this help
 
 Environment:
@@ -73,6 +76,52 @@ function cmdResetToken(): void {
   console.log(`Re-pair in Teams: /pair ${cfg.token}`);
 }
 
+function cmdMirror(argv: string[]): void {
+  // Read text from --text flag or stdin
+  const textArg = parseArg(argv, "--text");
+  const readStdin = (): Promise<string> => new Promise((resolve) => {
+    let data = "";
+    if (process.stdin.isTTY) { resolve(""); return; }
+    process.stdin.on("data", (c) => { data += c; });
+    process.stdin.on("end", () => resolve(data));
+  });
+
+  (async () => {
+    const text = textArg ?? (await readStdin());
+    if (!text || text.trim().length === 0) {
+      console.error("Usage: claude-teams-client mirror --text <msg>");
+      console.error("   or: echo <msg> | claude-teams-client mirror");
+      process.exit(1);
+    }
+    const port = parseInt(process.env.MIRROR_PORT || String(DEFAULT_MIRROR_PORT));
+    const body = JSON.stringify({ text });
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port,
+      path: "/mirror",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    }, (res) => {
+      if (res.statusCode === 200) {
+        process.exit(0);
+      } else {
+        let data = "";
+        res.on("data", (c) => { data += c; });
+        res.on("end", () => {
+          console.error(`mirror failed: ${res.statusCode} ${data}`);
+          process.exit(1);
+        });
+      }
+    });
+    req.on("error", (err) => {
+      console.error(`mirror failed: ${err.message} (is claude-teams-client running?)`);
+      process.exit(1);
+    });
+    req.write(body);
+    req.end();
+  })();
+}
+
 function cmdStart(): void {
   const cfg = loadOrCreateConfig();
   const token = process.env.CLIENT_TOKEN || cfg.token;
@@ -98,6 +147,9 @@ function main(): void {
       break;
     case "reset-token":
       cmdResetToken();
+      break;
+    case "mirror":
+      cmdMirror(argv);
       break;
     case "help":
     case "--help":

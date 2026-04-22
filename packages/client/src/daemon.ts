@@ -1,9 +1,11 @@
 import WebSocket from "ws";
+import * as http from "http";
 import { ClaudeCodeBridge } from "./claude-bridge";
 import type { BotToClient, ClientToBot } from "./protocol";
 
 const LOCAL_CONV_ID = "client-local";
-const CLIENT_VERSION = "0.3.0";
+const CLIENT_VERSION = "0.5.0";
+const DEFAULT_MIRROR_PORT = 47291;
 
 interface DaemonOptions {
   botUrl: string;
@@ -147,6 +149,41 @@ export function runDaemon(opts: DaemonOptions): void {
       }
     }
   };
+
+  // ── Mirror HTTP server ──
+  // Receives push events from Claude Code hooks and forwards to bot via WS.
+  const mirrorPort = parseInt(process.env.MIRROR_PORT || String(DEFAULT_MIRROR_PORT));
+  const mirrorServer = http.createServer((req, res) => {
+    if (req.method !== "POST" || req.url !== "/mirror") {
+      res.writeHead(404).end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const { text } = JSON.parse(body);
+        if (typeof text !== "string" || text.length === 0) {
+          res.writeHead(400).end("missing text");
+          return;
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          send({ type: "mirror_push", text });
+          res.writeHead(200).end("ok");
+        } else {
+          res.writeHead(503).end("bot offline");
+        }
+      } catch {
+        res.writeHead(400).end("invalid json");
+      }
+    });
+  });
+  mirrorServer.listen(mirrorPort, "127.0.0.1", () => {
+    console.log(`[client] mirror endpoint: http://127.0.0.1:${mirrorPort}/mirror`);
+  });
+  mirrorServer.on("error", (err) => {
+    console.error(`[client] mirror server error:`, err.message);
+  });
 
   connect();
 }
