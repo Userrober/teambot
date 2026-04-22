@@ -11,6 +11,7 @@ import {
   mirrorCwdsPath,
 } from "./config";
 import { runDaemon } from "./daemon";
+import { installHooks } from "./install-hooks";
 
 const DEFAULT_BOT_URL = "wss://teambot-mih3.onrender.com/ws";
 const DEFAULT_MIRROR_PORT = 47291;
@@ -42,6 +43,7 @@ Usage:
   claude-teams-client mirror-on            Enable mirroring for current directory
   claude-teams-client mirror-off           Disable mirroring for current directory
   claude-teams-client mirror-list          List directories with mirroring enabled
+  claude-teams-client install-hooks        (Re)install Claude Code hooks for mirroring
   claude-teams-client help                 Show this help
 
 Environment:
@@ -171,7 +173,26 @@ function cmdStart(): void {
   const token = process.env.CLIENT_TOKEN || cfg.token;
   const botUrl = process.env.BOT_WS_URL || cfg.botUrl || DEFAULT_BOT_URL;
   printBanner(token, botUrl);
+  try {
+    const r = installHooks();
+    if (r.hooksWritten || r.settingsUpdated) {
+      console.log(`[client] mirror hooks installed → ${r.settingsPath}`);
+      console.log("[client] enable mirroring per-directory with: claude-teams-client mirror-on");
+    }
+  } catch (err) {
+    console.warn(`[client] hook install skipped: ${err instanceof Error ? err.message : err}`);
+  }
   runDaemon({ botUrl, token });
+}
+
+function cmdInstallHooks(): void {
+  const r = installHooks();
+  console.log(`Hook scripts: ${r.hooksWritten ? "installed/updated" : "already up to date"}`);
+  console.log(`Settings file (${r.settingsPath}): ${r.settingsUpdated ? "updated" : "already configured"}`);
+  console.log("");
+  console.log("Next: enable mirroring in directories you want to mirror:");
+  console.log("  cd /your/project");
+  console.log("  claude-teams-client mirror-on");
 }
 
 function main(): void {
@@ -203,6 +224,9 @@ function main(): void {
       break;
     case "mirror-list":
       cmdMirrorList();
+      break;
+    case "install-hooks":
+      cmdInstallHooks();
       break;
     case "help":
     case "--help":

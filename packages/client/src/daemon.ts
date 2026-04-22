@@ -5,7 +5,7 @@ import { isMirrorCwd } from "./config";
 import type { BotToClient, ClientToBot } from "./protocol";
 
 const LOCAL_CONV_ID = "client-local";
-const CLIENT_VERSION = "0.6.0";
+const CLIENT_VERSION = "0.7.0";
 const DEFAULT_MIRROR_PORT = 47291;
 
 interface DaemonOptions {
