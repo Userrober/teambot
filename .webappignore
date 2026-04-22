@@ -26,3 +26,12 @@ m365agents.*.yml
 /appPackage/
 /infra/
 /devTools/
+/packages/
+/docs/
+/scripts/
+pairings.json
+*.log
+.bot.log
+.tunnel.log
+.teambot.pids
+.tunnel-id

@@ -1,10 +1,13 @@
 import { stripMentionsText, TokenCredentials } from "@microsoft/teams.api";
 import { App } from "@microsoft/teams.apps";
+import { ExpressAdapter } from "@microsoft/teams.apps";
 import { LocalStorage } from "@microsoft/teams.common";
 import config from "./config";
 import { ManagedIdentityCredential } from "@azure/identity";
 import { SessionStore } from "./session-store";
-import { ClaudeCodeBridge } from "./claude-bridge";
+import { PairingStore } from "./pairing-store";
+import { WsHub } from "./ws-hub";
+import type { BotToClient, ClientToBot } from "./protocol";
 import * as fs from "fs";
 import * as path from "path";
 import * as http from "http";
@@ -19,7 +22,6 @@ function logToFile(tag: string, content: string) {
   console.log(line.trimEnd());
 }
 
-// Create storage for conversation history
 const storage = new LocalStorage();
 
 const createTokenFactory = () => {
@@ -43,34 +45,45 @@ const tokenCredentials: TokenCredentials = {
 const credentialOptions =
   config.MicrosoftAppType === "UserAssignedMsi" ? { ...tokenCredentials } : undefined;
 
+// Create our own http.Server so we can attach WebSocket on the same port.
+const httpServer = http.createServer();
+const httpAdapter = new ExpressAdapter(httpServer);
+
 const app = new App({
   ...credentialOptions,
   storage,
+  httpServerAdapter: httpAdapter,
 });
 
 const sessionStore = new SessionStore();
+const pairingStore = new PairingStore();
+const wsHub = new WsHub();
 
-const claudeBridge = new ClaudeCodeBridge({
-  cliPath: config.ClaudeCliPath,
-  model: config.ClaudeModel,
-  workingDirectory: config.ClaudeWorkingDir,
-  timeoutMs: config.ClaudeTimeoutMs,
-  maxBudgetUsd: config.ClaudeMaxBudgetUsd,
-  bare: config.ClaudeBare,
-  permissionMode: config.ClaudePermissionMode,
-  systemPrompt: config.ClaudeSystemPrompt,
-}, sessionStore);
+const WS_PATH = process.env.WS_PATH || "/ws";
+wsHub.attach(httpServer, WS_PATH);
 
-// Store serviceUrl and conversationId from incoming activities
 let lastServiceUrl: string | null = null;
-let lastConversationId: string | null = null;
+const aadToConversation: Map<string, string> = new Map();
 
-// Send a proactive message — tries app.send() first, falls back to sendDirect (for Playground)
+wsHub.setMirrorHandler((token, text) => {
+  const aadObjectId = pairingStore.aadFor(token);
+  if (!aadObjectId) return;
+  const conversationId = aadToConversation.get(aadObjectId);
+  if (!conversationId) return;
+  const fullText = `[mirror] ${text}`;
+  if (fullText.length > 25000) {
+    for (const chunk of splitMessage(fullText, 25000)) {
+      pushToTeams(conversationId, chunk).catch(() => {});
+    }
+  } else {
+    pushToTeams(conversationId, fullText).catch(() => {});
+  }
+});
+
 async function pushToTeams(conversationId: string, text: string): Promise<void> {
   try {
     await app.send(conversationId, { type: "message", text });
   } catch {
-    // Fallback: direct connector API (works for Playground without auth)
     const serviceUrl = lastServiceUrl || sessionStore.getConnectorUrl();
     if (serviceUrl) {
       await sendDirect(serviceUrl, conversationId, text);
@@ -78,7 +91,6 @@ async function pushToTeams(conversationId: string, text: string): Promise<void> 
   }
 }
 
-// Send a message directly via Bot Framework connector API (works with Playground)
 async function sendDirect(serviceUrl: string, conversationId: string, text: string): Promise<void> {
   const url = `${serviceUrl}/v3/conversations/${conversationId}/activities`;
   const body = JSON.stringify({
@@ -118,7 +130,6 @@ function splitMessage(text: string, maxLength: number): string[] {
   return chunks;
 }
 
-// Helper to send a potentially long message via context.send()
 async function sendToTeams(context: any, text: string): Promise<void> {
   if (text.length > 25000) {
     for (const chunk of splitMessage(text, 25000)) {
@@ -129,32 +140,44 @@ async function sendToTeams(context: any, text: string): Promise<void> {
   }
 }
 
-// ── Message handler ──
+function expectReply(msg: ClientToBot): string {
+  if (msg.type === "reply") return msg.text;
+  if (msg.type === "error") throw new Error(msg.message);
+  throw new Error(`Unexpected client response: ${msg.type}`);
+}
 
 app.on("message", async (context) => {
   const activity = context.activity;
   const text: string = stripMentionsText(activity);
   const from = activity.from?.name || activity.from?.id || "unknown";
+  const aadObjectId = activity.from?.aadObjectId || activity.from?.id;
   const conversationId = activity.conversation.id;
 
   logToFile("Teams ← " + from, text);
 
-  // Save serviceUrl and conversationId for /api/push
   if (activity.serviceUrl) {
     lastServiceUrl = activity.serviceUrl;
     sessionStore.setConnectorUrl(activity.serviceUrl);
   }
-  lastConversationId = conversationId;
+  if (aadObjectId) {
+    aadToConversation.set(aadObjectId, conversationId);
+  }
   sessionStore.setChannelConversationId(conversationId);
 
-  // ── Commands ──
+  // ── Commands that don't need a client ──
 
   if (text === "/help") {
     await context.send(
       "Claude Code Bot — bridges Claude Code CLI to Teams.\n\n" +
+      "First-time setup:\n" +
+      "- Run the client on your computer, it prints a pairing token\n" +
+      "- Send `/pair <token>` here to bind your Teams account\n\n" +
       "Commands:\n" +
       "- /help — Show this help\n" +
-      "- /resume — List terminal sessions / bind to a terminal's Claude session\n" +
+      "- /pair <token> — Bind your Teams account to a client\n" +
+      "- /unpair — Remove your current binding\n" +
+      "- /whoami — Show your pairing status\n" +
+      "- /resume — List local sessions / bind to one\n" +
       "- /reset — Reset Claude session (start fresh)\n" +
       "- /status — Show current session status\n" +
       "- /model <name> — Switch model (e.g. /model opus, /model sonnet)\n" +
@@ -165,289 +188,234 @@ app.on("message", async (context) => {
     return;
   }
 
-  if (text === "/reset") {
-    claudeBridge.resetSession(conversationId);
-    await context.send("Session reset. Next message will start a new Claude conversation.");
-    return;
-  }
-
-  if (text.startsWith("/model")) {
-    const modelName = text.replace("/model", "").trim();
-    const models: Array<{ id: string; label: string }> = [
-      { id: "claude-opus-4-6-20250514", label: "Opus 4.6 (1M context)" },
-      { id: "claude-sonnet-4-6-20250514", label: "Sonnet 4.6" },
-      { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
-    ];
-
-    if (!modelName) {
-      const current = claudeBridge.getModel();
-      const list = models.map((m, i) =>
-        `${i + 1}. ${m.label} — ${m.id}${m.id === current ? " ✓" : ""}`
-      ).join("\n");
-      await context.send(
-        `Current model: ${current}\n\n` +
-        `Available models:\n${list}\n\n` +
-        `Usage: /model <number or name>\nExample: /model 1, /model opus, /model claude-sonnet-4-6-20250514`
-      );
-    } else {
-      // Match by number, short name, or full ID
-      const num = parseInt(modelName);
-      let matched = num >= 1 && num <= models.length ? models[num - 1] : undefined;
-      if (!matched) {
-        const lower = modelName.toLowerCase();
-        matched = models.find(m =>
-          m.id === modelName ||
-          m.id.includes(lower) ||
-          m.label.toLowerCase().includes(lower)
-        );
-      }
-      if (matched) {
-        claudeBridge.setModel(matched.id);
-        await context.send(`Model switched to: ${matched.label} (${matched.id})`);
-      } else {
-        // Allow setting arbitrary model ID
-        claudeBridge.setModel(modelName);
-        await context.send(`Model set to: ${modelName}`);
-      }
-    }
-    return;
-  }
-
-  if (text === "/compact") {
-    await context.send("Compacting conversation...");
-    try {
-      const reply = await claudeBridge.sendMessage(conversationId, "/compact");
-      await sendToTeams(context, reply);
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      await context.send(`Compact failed: ${errMsg}`);
-    }
-    return;
-  }
-
-  if (text === "/status") {
-    const status = claudeBridge.getSessionStatus(conversationId);
-    if (!status.active) {
-      await context.send("No active Claude session for this conversation.");
-    } else {
-      await context.send(
-        `Session: ${status.sessionId}\n` +
-        `Messages: ${status.messageCount}\n` +
-        `Cost: $${status.totalCostUsd?.toFixed(4)}\n` +
-        `Busy: ${status.busy}\n` +
-        `Queue: ${status.queueLength}\n` +
-        `Last activity: ${status.lastActivity}`
-      );
-    }
-    return;
-  }
-
   if (text === "/diag") {
     await context.send(JSON.stringify(activity, null, 2));
     return;
   }
 
-  if (text.startsWith("/resume")) {
-    const target = text.replace("/resume", "").trim();
-    if (!target) {
-      // List all local Claude Code sessions
-      const sessions = claudeBridge.listLocalSessions();
-      if (sessions.length === 0) {
-        await context.send("No Claude Code sessions found.");
-      } else {
-        const lines = sessions.map((s, i) =>
-          `${i + 1}. \`${s.id}\` — ${s.date} — ${s.messageCount} msgs${s.preview ? ` — ${s.preview}` : ""}`
-        );
-        await context.send(
-          "Local Claude Code sessions:\n" + lines.join("\n") +
-          "\n\nUsage: /resume <number or session_id>\nExample: /resume 1"
-        );
-      }
+  if (!aadObjectId) {
+    await context.send("Cannot identify your user (missing aadObjectId). Try signing in to Teams again.");
+    return;
+  }
+
+  // ── Pairing commands ──
+
+  if (text.startsWith("/pair")) {
+    const token = text.replace("/pair", "").trim();
+    if (!token) {
+      await context.send(
+        "Usage: /pair <token>\n" +
+        "Find the token in the terminal where you ran the client."
+      );
+      return;
+    }
+    pairingStore.pair(aadObjectId, token);
+    const online = wsHub.isTokenOnline(token);
+    await context.send(
+      `✓ Paired with client \`${token.slice(0, 8)}...\`.\n` +
+      (online
+        ? "Client is online. Go ahead and send a message."
+        : "Client is not online yet — start it on your computer and messages will start flowing.")
+    );
+    return;
+  }
+
+  if (text === "/unpair") {
+    const old = pairingStore.unpair(aadObjectId);
+    if (old) {
+      await context.send(`✓ Unpaired (was \`${old.slice(0, 8)}...\`).`);
     } else {
-      // Match by number or session ID
-      let sessionId = target;
-      const num = parseInt(target);
-      if (num >= 1) {
-        const sessions = claudeBridge.listLocalSessions();
-        if (num <= sessions.length) {
-          sessionId = sessions[num - 1].id;
-        }
-      }
-      // Also check terminal sessions
-      const thread = sessionStore.getThread(target);
-      if (thread) {
-        const claudeId = sessionStore.getTerminalClaudeSessionId(target);
-        if (claudeId) {
-          sessionId = claudeId;
-        }
-      }
-      // Bind to the session
-      sessionStore.setClaudeSessionId(conversationId, sessionId);
-      claudeBridge.bindSession(conversationId, sessionId);
-      await context.send(`Resumed session \`${sessionId}\`\nYour messages now continue this Claude conversation.`);
+      await context.send("You are not paired with any client.");
     }
     return;
   }
 
-  // ── Forward to Claude Code CLI ──
-
-  await context.send("Thinking...");
-  try {
-    logToFile("Claude →", `Sending to Claude CLI: ${text.slice(0, 200)}`);
-    const reply = await claudeBridge.sendMessage(conversationId, text);
-    logToFile("Claude ←", `Reply: ${reply.slice(0, 200)}`);
-    await sendToTeams(context, reply);
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logToFile("Claude ERROR", errMsg);
-    await context.send(`Error: ${errMsg}`);
-  }
-});
-
-// ── HTTP API for terminal hooks ──
-
-// POST /api/register - Terminal registers a session
-app.server.registerRoute("POST", "/api/register", async (req) => {
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const sessionId = body?.session_id;
-    const claudeSessionId = body?.claude_session_id;
-
-    if (!sessionId) {
-      return { status: 400, body: JSON.stringify({ error: "Missing session_id" }) };
-    }
-
-    const existing = sessionStore.getThread(sessionId);
-    if (existing) {
-      logToFile("Register", `Session ${sessionId} reconnected`);
+  if (text === "/whoami") {
+    const token = pairingStore.tokenFor(aadObjectId);
+    if (!token) {
+      await context.send("You are not paired. Send `/pair <token>` to bind a client.");
     } else {
-      const channelConvId = sessionStore.getChannelConversationId();
-      sessionStore.registerThread(sessionId, channelConvId || "", "");
-      logToFile("Register", `Session ${sessionId} registered`);
+      const online = wsHub.isTokenOnline(token);
+      await context.send(
+        `Paired with client \`${token.slice(0, 8)}...\`\n` +
+        `Status: ${online ? "online" : "offline"}`
+      );
     }
-
-    // Save terminal's Claude session ID (for /resume command)
-    if (claudeSessionId) {
-      sessionStore.setTerminalClaudeSessionId(sessionId, claudeSessionId);
-    }
-
-    return { status: 200, body: JSON.stringify({ ok: true, session_id: sessionId, reused: !!existing }) };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logToFile("Register ERROR", errMsg);
-    return { status: 500, body: JSON.stringify({ error: errMsg }) };
+    return;
   }
-});
 
-// POST /api/push - Terminal pushes a message to Teams
-app.server.registerRoute("POST", "/api/push", async (req) => {
+  // ── Everything below requires a paired, online client ──
+
+  const token = pairingStore.tokenFor(aadObjectId);
+  if (!token) {
+    await context.send(
+      "You are not paired yet. Run the client on your computer, then send:\n" +
+      "  /pair <token>"
+    );
+    return;
+  }
+
+  const sendToClient = (message: BotToClient & { id: string }) =>
+    wsHub.sendToToken(token, message);
+
+  if (!wsHub.isTokenOnline(token)) {
+    await context.send(
+      "Your client is offline.\n\n" +
+      "Start it on your computer:\n" +
+      "  `claude-teams-client`\n\n" +
+      "Then send your message again."
+    );
+    return;
+  }
+
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const text = body?.text;
-    const sessionId = body?.session_id;
-
-    if (!text) {
-      return { status: 400, body: JSON.stringify({ error: "Missing 'text' field" }) };
-    }
-    if (!sessionId) {
-      return { status: 400, body: JSON.stringify({ error: "Missing 'session_id' field" }) };
-    }
-
-    logToFile("Push", `[${sessionId}] ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}`);
-
-    // Save terminal's Claude session ID if provided (for /resume)
-    const claudeSessionId = body?.claude_session_id;
-    if (claudeSessionId) {
-      sessionStore.setTerminalClaudeSessionId(sessionId, claudeSessionId);
-    }
-    // Determine conversationId
-    const conversationId = lastConversationId || sessionStore.getChannelConversationId();
-
-    if (!conversationId) {
-      return {
-        status: 503,
-        body: JSON.stringify({ error: "Bot has not received any Teams message yet. Send a message in Teams first." }),
-      };
-    }
-
-    // Send to Teams
-    const fullText = `[${sessionId}] ${text}`;
-    if (fullText.length > 25000) {
-      for (const chunk of splitMessage(fullText, 25000)) {
-        await pushToTeams(conversationId, chunk);
+    if (text === "/reset") {
+      const id = wsHub.newRequestId();
+      const reply = await sendToClient({ type: "reset", id });
+      if (reply.type === "ok") {
+        await context.send("Session reset. Next message will start a new Claude conversation.");
+      } else if (reply.type === "error") {
+        await context.send(`Error: ${reply.message}`);
       }
+      return;
+    }
+
+    if (text.startsWith("/model")) {
+      const modelName = text.replace("/model", "").trim();
+      const models: Array<{ id: string; label: string }> = [
+        { id: "claude-opus-4-6-20250514", label: "Opus 4.6 (1M context)" },
+        { id: "claude-sonnet-4-6-20250514", label: "Sonnet 4.6" },
+        { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+      ];
+
+      if (!modelName) {
+        const id = wsHub.newRequestId();
+        const reply = await sendToClient({ type: "get_model", id });
+        const current = reply.type === "model_info" ? reply.current : "(unknown)";
+        const list = models.map((m, i) =>
+          `${i + 1}. ${m.label} — ${m.id}${m.id === current ? " ✓" : ""}`
+        ).join("\n");
+        await context.send(
+          `Current model: ${current}\n\n` +
+          `Available models:\n${list}\n\n` +
+          `Usage: /model <number or name>`
+        );
+      } else {
+        const num = parseInt(modelName);
+        let matched = num >= 1 && num <= models.length ? models[num - 1] : undefined;
+        if (!matched) {
+          const lower = modelName.toLowerCase();
+          matched = models.find(m =>
+            m.id === modelName ||
+            m.id.includes(lower) ||
+            m.label.toLowerCase().includes(lower)
+          );
+        }
+        const targetId = matched?.id || modelName;
+        const id = wsHub.newRequestId();
+        const reply = await sendToClient({ type: "set_model", id, model: targetId });
+        if (reply.type === "ok") {
+          await context.send(`Model switched to: ${matched?.label || targetId}`);
+        } else if (reply.type === "error") {
+          await context.send(`Error: ${reply.message}`);
+        }
+      }
+      return;
+    }
+
+    if (text === "/compact") {
+      await context.send("Compacting conversation...");
+      const id = wsHub.newRequestId();
+      const reply = await sendToClient({ type: "compact", id });
+      await sendToTeams(context, expectReply(reply));
+      return;
+    }
+
+    if (text === "/status") {
+      const id = wsHub.newRequestId();
+      const reply = await sendToClient({ type: "status", id });
+      if (reply.type !== "status_info") {
+        await context.send(`Error: unexpected response ${reply.type}`);
+        return;
+      }
+      const s = reply.data;
+      if (!s.active) {
+        await context.send("No active Claude session for this conversation.");
+      } else {
+        await context.send(
+          `Session: ${s.sessionId}\n` +
+          `Messages: ${s.messageCount}\n` +
+          `Cost: $${s.totalCostUsd?.toFixed(4)}\n` +
+          `Busy: ${s.busy}\n` +
+          `Queue: ${s.queueLength}\n` +
+          `Last activity: ${s.lastActivity}`
+        );
+      }
+      return;
+    }
+
+    if (text.startsWith("/resume")) {
+      const target = text.replace("/resume", "").trim();
+      if (!target) {
+        const id = wsHub.newRequestId();
+        const reply = await sendToClient({ type: "list_sessions", id });
+        if (reply.type !== "session_list") {
+          await context.send(`Error: unexpected response`);
+          return;
+        }
+        if (reply.items.length === 0) {
+          await context.send("No Claude Code sessions found.");
+        } else {
+          const lines = reply.items.map((s, i) =>
+            `${i + 1}. \`${s.id}\` — ${s.date} — ${s.messageCount} msgs${s.preview ? ` — ${s.preview}` : ""}`
+          );
+          await context.send(
+            "Local Claude Code sessions:\n" + lines.join("\n") +
+            "\n\nUsage: /resume <number or session_id>"
+          );
+        }
+      } else {
+        let sessionId = target;
+        const num = parseInt(target);
+        if (num >= 1) {
+          const listId = wsHub.newRequestId();
+          const listReply = await sendToClient({ type: "list_sessions", id: listId });
+          if (listReply.type === "session_list" && num <= listReply.items.length) {
+            sessionId = listReply.items[num - 1].id;
+          }
+        }
+        const id = wsHub.newRequestId();
+        const reply = await sendToClient({ type: "bind_session", id, sessionId });
+        if (reply.type === "ok") {
+          await context.send(`Resumed session \`${sessionId}\`\nYour messages now continue this Claude conversation.`);
+        } else if (reply.type === "error") {
+          await context.send(`Error: ${reply.message}`);
+        }
+      }
+      return;
+    }
+
+    // Forward to Claude via client
+    await context.send("Thinking...");
+    logToFile("Claude →", `[${aadObjectId.slice(0, 8)}] ${text.slice(0, 200)}`);
+    const id = wsHub.newRequestId();
+    const reply = await sendToClient({ type: "user_message", id, text });
+    const replyText = expectReply(reply);
+    logToFile("Claude ←", `Reply: ${replyText.slice(0, 200)}`);
+    await sendToTeams(context, replyText);
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logToFile("Bot ERROR", errMsg);
+    if (errMsg.includes("did not respond within")) {
+      await context.send(
+        "Your client did not respond in time.\n" +
+        "Check that `claude-teams-client` is still running on your computer."
+      );
+    } else if (errMsg.includes("offline")) {
+      await context.send(errMsg);
     } else {
-      await pushToTeams(conversationId, fullText);
+      await context.send(`Something went wrong: ${errMsg}`);
     }
-
-    return { status: 200, body: JSON.stringify({ ok: true }) };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logToFile("Push ERROR", errMsg);
-    return { status: 500, body: JSON.stringify({ error: errMsg }) };
-  }
-});
-
-// POST /api/inbox - Terminal polls for messages from Teams
-app.server.registerRoute("POST", "/api/inbox", async (req) => {
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const sessionId = body?.session_id;
-    if (!sessionId) {
-      return { status: 400, body: JSON.stringify({ error: "Missing session_id" }) };
-    }
-    const messages = sessionStore.readInbox(sessionId);
-    return { status: 200, body: JSON.stringify({ messages }) };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return { status: 500, body: JSON.stringify({ error: errMsg }) };
-  }
-});
-
-// POST /api/handoff - Terminal hands off its Claude session to Teams
-app.server.registerRoute("POST", "/api/handoff", async (req) => {
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const claudeSessionId = body?.claude_session_id;
-
-    if (!claudeSessionId) {
-      return { status: 400, body: JSON.stringify({ error: "Missing claude_session_id" }) };
-    }
-
-    // Bind all known conversations to this Claude session
-    const convId = lastConversationId || sessionStore.getChannelConversationId();
-    if (convId) {
-      sessionStore.setClaudeSessionId(convId, claudeSessionId);
-      claudeBridge.bindSession(convId, claudeSessionId);
-      logToFile("Handoff", `Teams bound to Claude session ${claudeSessionId.slice(0, 8)}...`);
-    }
-
-    return { status: 200, body: JSON.stringify({ ok: true, claude_session_id: claudeSessionId }) };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    logToFile("Handoff ERROR", errMsg);
-    return { status: 500, body: JSON.stringify({ error: errMsg }) };
-  }
-});
-
-// POST /api/takeback - Terminal takes back its Claude session from Teams
-app.server.registerRoute("POST", "/api/takeback", async (req) => {
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const claudeSessionId = body?.claude_session_id;
-
-    // Remove binding — Teams will create independent sessions again
-    const convId = lastConversationId || sessionStore.getChannelConversationId();
-    if (convId) {
-      sessionStore.removeClaudeSession(convId);
-      claudeBridge.resetSession(convId);
-      logToFile("Takeback", `Teams unbound from Claude session ${claudeSessionId?.slice(0, 8) || "unknown"}...`);
-    }
-
-    return { status: 200, body: JSON.stringify({ ok: true }) };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return { status: 500, body: JSON.stringify({ error: errMsg }) };
   }
 });
 

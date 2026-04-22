@@ -38,24 +38,26 @@ try {
   stopped++;
 } catch {}
 
-// Kill node processes on Bot port (3978)
+// Kill node processes on Bot port (3978, hosts both HTTP and WS)
 const BOT_PORT = process.env.PORT || '3978';
-try {
-  if (process.platform === 'win32') {
-    const result = execSync(`netstat -ano | findstr :${BOT_PORT} | findstr LISTENING`, { encoding: 'utf8' });
-    const pids = [...new Set(result.trim().split('\n').map(line => line.trim().split(/\s+/).pop()).filter(p => p && p !== '0'))];
-    for (const pid of pids) {
-      try {
-        execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-        console.log(`  Stopped process ${pid} (port ${BOT_PORT})`);
-        stopped++;
-      } catch {}
+for (const port of [BOT_PORT]) {
+  try {
+    if (process.platform === 'win32') {
+      const result = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf8' });
+      const pids = [...new Set(result.trim().split('\n').map(line => line.trim().split(/\s+/).pop()).filter(p => p && p !== '0'))];
+      for (const pid of pids) {
+        try {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+          console.log(`  Stopped process ${pid} (port ${port})`);
+          stopped++;
+        } catch {}
+      }
+    } else {
+      execSync(`lsof -ti :${port} | xargs kill`, { stdio: 'ignore' });
+      stopped++;
     }
-  } else {
-    execSync(`lsof -ti :${BOT_PORT} | xargs kill`, { stdio: 'ignore' });
-    stopped++;
-  }
-} catch {}
+  } catch {}
+}
 
 // Clean up log files and state
 for (const f of ['.bot.log', '.tunnel.log', 'bot-state.json']) {

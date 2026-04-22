@@ -34,6 +34,8 @@ resource webApp 'Microsoft.Web/sites@2021-02-01' = {
     httpsOnly: true
     siteConfig: {
       alwaysOn: true
+      webSocketsEnabled: true
+      http20Enabled: true
       appSettings: [
         {
           name: 'WEBSITE_RUN_FROM_PACKAGE'

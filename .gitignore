@@ -18,6 +18,7 @@ node_modules/
 # build
 lib/
 dist/
+*.tsbuildinfo
 
 # Dev tool directories
 /devTools/
@@ -30,6 +31,14 @@ inbox/
 .teambot.pids
 .bot.log
 .tunnel.log
+.client.log
+.client.err.log
+sessions.json
+pairings.json
+*.jsonl
+
+# Pack tarballs
+packages/client/*.tgz
 
 # App package
 appPackage.teams.zip

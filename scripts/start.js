@@ -38,16 +38,18 @@ if (fs.existsSync(PID_FILE)) {
 }
 
 async function start() {
-  // Find tunnel ID
+  // Find tunnel ID (TUNNEL_ID env var wins, otherwise use first one listed)
   console.log('[1/3] Finding dev tunnel...');
-  let tunnelId;
-  try {
-    const list = execSync('devtunnel list', { encoding: 'utf8' });
-    const lines = list.split('\n').filter(l => l.match(/^\S+\.\S+/));
-    if (lines.length > 0) {
-      tunnelId = lines[0].split(/\s+/)[0].trim();
-    }
-  } catch {}
+  let tunnelId = process.env.TUNNEL_ID;
+  if (!tunnelId) {
+    try {
+      const list = execSync('devtunnel list', { encoding: 'utf8' });
+      const lines = list.split('\n').filter(l => l.match(/^\S+\.\S+/));
+      if (lines.length > 0) {
+        tunnelId = lines[0].split(/\s+/)[0].trim();
+      }
+    } catch {}
+  }
 
   if (!tunnelId) {
     console.log('  ERROR: No dev tunnel found.');

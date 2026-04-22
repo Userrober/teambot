@@ -1,0 +1,39 @@
+{
+  "name": "claude-teams-client",
+  "version": "0.3.0",
+  "description": "Bridge a Microsoft Teams bot to your local Claude Code CLI. Install once, pair once, chat with Claude from Teams on any device.",
+  "license": "MIT",
+  "bin": {
+    "claude-teams-client": "dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node -r ts-node/register src/cli.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
+    "ts-node": "^10.4.0",
+    "typescript": "~5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "teams",
+    "microsoft-teams",
+    "bot",
+    "cli"
+  ]
+}
