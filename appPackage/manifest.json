@@ -14,12 +14,12 @@
         "outline": "outline.png"
     },
     "name": {
-        "short": "teambot${{APP_NAME_SUFFIX}}",
-        "full": "full name for teambot"
+        "short": "ClaudeBot${{APP_NAME_SUFFIX}}",
+        "full": "ClaudeBot — Claude Code in Teams"
     },
     "description": {
-        "short": "short description for teambot",
-        "full": "full description for teambot"
+        "short": "Chat with your local Claude Code from Teams",
+        "full": "ClaudeBot bridges Microsoft Teams to your local Claude Code CLI. Send messages from Teams on any device and they get processed by Claude on your computer."
     },
     "accentColor": "#FFFFFF",
     "supportsChannelFeatures": "tier1",
