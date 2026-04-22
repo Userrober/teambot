@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 import * as http from "http";
-import { loadOrCreateConfig, updateConfig, resetToken, configPath } from "./config";
+import {
+  loadOrCreateConfig,
+  updateConfig,
+  resetToken,
+  configPath,
+  addMirrorCwd,
+  removeMirrorCwd,
+  listMirrorCwds,
+  mirrorCwdsPath,
+} from "./config";
 import { runDaemon } from "./daemon";
 
 const DEFAULT_BOT_URL = "wss://teambot-mih3.onrender.com/ws";
@@ -30,6 +39,9 @@ Usage:
   claude-teams-client config --bot-url URL Set the bot WebSocket URL
   claude-teams-client reset-token          Generate a new token (requires re-pairing)
   claude-teams-client mirror --text MSG    Push text to Teams (used by Claude hooks)
+  claude-teams-client mirror-on            Enable mirroring for current directory
+  claude-teams-client mirror-off           Disable mirroring for current directory
+  claude-teams-client mirror-list          List directories with mirroring enabled
   claude-teams-client help                 Show this help
 
 Environment:
@@ -77,8 +89,9 @@ function cmdResetToken(): void {
 }
 
 function cmdMirror(argv: string[]): void {
-  // Read text from --text flag or stdin
   const textArg = parseArg(argv, "--text");
+  const cwdArg = parseArg(argv, "--cwd") || process.env.PWD || process.cwd();
+  const sessionArg = parseArg(argv, "--session");
   const readStdin = (): Promise<string> => new Promise((resolve) => {
     let data = "";
     if (process.stdin.isTTY) { resolve(""); return; }
@@ -89,12 +102,11 @@ function cmdMirror(argv: string[]): void {
   (async () => {
     const text = textArg ?? (await readStdin());
     if (!text || text.trim().length === 0) {
-      console.error("Usage: claude-teams-client mirror --text <msg>");
-      console.error("   or: echo <msg> | claude-teams-client mirror");
+      console.error("Usage: claude-teams-client mirror --text <msg> [--cwd <dir>] [--session <id>]");
       process.exit(1);
     }
     const port = parseInt(process.env.MIRROR_PORT || String(DEFAULT_MIRROR_PORT));
-    const body = JSON.stringify({ text });
+    const body = JSON.stringify({ text, cwd: cwdArg, sessionId: sessionArg });
     const req = http.request({
       hostname: "127.0.0.1",
       port,
@@ -120,6 +132,38 @@ function cmdMirror(argv: string[]): void {
     req.write(body);
     req.end();
   })();
+}
+
+function cmdMirrorOn(): void {
+  const cwd = process.cwd();
+  const { added, cwd: norm } = addMirrorCwd(cwd);
+  if (added) {
+    console.log(`✓ Mirror enabled for: ${norm}`);
+  } else {
+    console.log(`Mirror already enabled for: ${norm}`);
+  }
+  console.log(`  (Subdirectories included. Stored in ${mirrorCwdsPath()})`);
+}
+
+function cmdMirrorOff(): void {
+  const cwd = process.cwd();
+  const { removed, cwd: norm } = removeMirrorCwd(cwd);
+  if (removed) {
+    console.log(`✓ Mirror disabled for: ${norm}`);
+  } else {
+    console.log(`Mirror was not enabled for: ${norm}`);
+  }
+}
+
+function cmdMirrorList(): void {
+  const list = listMirrorCwds();
+  if (list.length === 0) {
+    console.log("No mirror directories configured.");
+    console.log("Run `claude-teams-client mirror-on` in a directory to enable mirroring there.");
+    return;
+  }
+  console.log("Mirror enabled for:");
+  for (const cwd of list) console.log(`  ${cwd}`);
 }
 
 function cmdStart(): void {
@@ -150,6 +194,15 @@ function main(): void {
       break;
     case "mirror":
       cmdMirror(argv);
+      break;
+    case "mirror-on":
+      cmdMirrorOn();
+      break;
+    case "mirror-off":
+      cmdMirrorOff();
+      break;
+    case "mirror-list":
+      cmdMirrorList();
       break;
     case "help":
     case "--help":

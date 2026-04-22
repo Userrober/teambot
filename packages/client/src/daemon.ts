@@ -1,10 +1,11 @@
 import WebSocket from "ws";
 import * as http from "http";
 import { ClaudeCodeBridge } from "./claude-bridge";
+import { isMirrorCwd } from "./config";
 import type { BotToClient, ClientToBot } from "./protocol";
 
 const LOCAL_CONV_ID = "client-local";
-const CLIENT_VERSION = "0.5.0";
+const CLIENT_VERSION = "0.6.0";
 const DEFAULT_MIRROR_PORT = 47291;
 
 interface DaemonOptions {
@@ -162,13 +163,22 @@ export function runDaemon(opts: DaemonOptions): void {
     req.on("data", (chunk) => { body += chunk; });
     req.on("end", () => {
       try {
-        const { text } = JSON.parse(body);
+        const parsed = JSON.parse(body);
+        const text: unknown = parsed.text;
+        const cwd: string | undefined = typeof parsed.cwd === "string" ? parsed.cwd : undefined;
+        const sessionId: string | undefined = typeof parsed.sessionId === "string" ? parsed.sessionId : undefined;
         if (typeof text !== "string" || text.length === 0) {
           res.writeHead(400).end("missing text");
           return;
         }
+        if (cwd && !isMirrorCwd(cwd)) {
+          res.writeHead(200).end("skipped (cwd not whitelisted)");
+          return;
+        }
+        const prefix = sessionId ? `[${sessionId.slice(0, 8)}] ` : "";
+        const finalText = prefix + text;
         if (ws && ws.readyState === WebSocket.OPEN) {
-          send({ type: "mirror_push", text });
+          send({ type: "mirror_push", text: finalText });
           res.writeHead(200).end("ok");
         } else {
           res.writeHead(503).end("bot offline");

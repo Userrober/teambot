@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 
 const CONFIG_DIR = path.join(os.homedir(), ".claude-teams-client");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+const MIRROR_FILE = path.join(CONFIG_DIR, "mirror-cwds.json");
 
 export interface ClientConfig {
   token: string;
@@ -64,4 +65,55 @@ export function resetToken(): ClientConfig {
 
 export function configPath(): string {
   return CONFIG_FILE;
+}
+
+function normalizeCwd(cwd: string): string {
+  return path.resolve(cwd).toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function readMirrorCwds(): string[] {
+  try {
+    const raw = fs.readFileSync(MIRROR_FILE, "utf8");
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeMirrorCwds(cwds: string[]): void {
+  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(MIRROR_FILE, JSON.stringify(cwds, null, 2));
+}
+
+export function listMirrorCwds(): string[] {
+  return readMirrorCwds();
+}
+
+export function addMirrorCwd(cwd: string): { added: boolean; cwd: string } {
+  const norm = normalizeCwd(cwd);
+  const list = readMirrorCwds();
+  if (list.includes(norm)) return { added: false, cwd: norm };
+  list.push(norm);
+  writeMirrorCwds(list);
+  return { added: true, cwd: norm };
+}
+
+export function removeMirrorCwd(cwd: string): { removed: boolean; cwd: string } {
+  const norm = normalizeCwd(cwd);
+  const list = readMirrorCwds();
+  const idx = list.indexOf(norm);
+  if (idx === -1) return { removed: false, cwd: norm };
+  list.splice(idx, 1);
+  writeMirrorCwds(list);
+  return { removed: true, cwd: norm };
+}
+
+export function isMirrorCwd(cwd: string): boolean {
+  const norm = normalizeCwd(cwd);
+  return readMirrorCwds().some((entry) => norm === entry || norm.startsWith(entry + "/"));
+}
+
+export function mirrorCwdsPath(): string {
+  return MIRROR_FILE;
 }
