@@ -1,34 +1,53 @@
 import * as fs from "fs";
 import * as path from "path";
+import { Redis } from "@upstash/redis";
 
 const STATE_FILE = path.join(__dirname, "pairings.json");
+const REDIS_AAD_KEY = "teambot:pairings:byAad";
+const REDIS_TOKEN_KEY = "teambot:pairings:byToken";
 
 interface PairingsFile {
-  byAad: Record<string, string>;   // aadObjectId → token
-  byToken: Record<string, string>; // token → aadObjectId
+  byAad: Record<string, string>;
+  byToken: Record<string, string>;
 }
 
 export class PairingStore {
   private byAad: Map<string, string> = new Map();
   private byToken: Map<string, string> = new Map();
+  private redis: Redis | null = null;
+  private ready: Promise<void>;
 
   constructor() {
-    this.load();
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (url && token) {
+      this.redis = new Redis({ url, token });
+      this.ready = this.loadFromRedis();
+    } else {
+      console.log("[pairing-store] UPSTASH_REDIS_REST_* not set, falling back to local file");
+      this.loadFromFile();
+      this.ready = Promise.resolve();
+    }
+  }
+
+  async waitReady(): Promise<void> {
+    return this.ready;
   }
 
   pair(aadObjectId: string, token: string): void {
-    // Remove any stale bindings for either side so the new pair is unique.
     const prevToken = this.byAad.get(aadObjectId);
     if (prevToken && prevToken !== token) {
       this.byToken.delete(prevToken);
+      this.redisDel(REDIS_TOKEN_KEY, prevToken);
     }
     const prevAad = this.byToken.get(token);
     if (prevAad && prevAad !== aadObjectId) {
       this.byAad.delete(prevAad);
+      this.redisDel(REDIS_AAD_KEY, prevAad);
     }
     this.byAad.set(aadObjectId, token);
     this.byToken.set(token, aadObjectId);
-    this.save();
+    this.persist(aadObjectId, token);
   }
 
   unpair(aadObjectId: string): string | null {
@@ -36,7 +55,12 @@ export class PairingStore {
     if (!token) return null;
     this.byAad.delete(aadObjectId);
     this.byToken.delete(token);
-    this.save();
+    if (this.redis) {
+      this.redisDel(REDIS_AAD_KEY, aadObjectId);
+      this.redisDel(REDIS_TOKEN_KEY, token);
+    } else {
+      this.saveToFile();
+    }
     return token;
   }
 
@@ -48,7 +72,21 @@ export class PairingStore {
     return this.byToken.get(token) ?? null;
   }
 
-  private load(): void {
+  private async loadFromRedis(): Promise<void> {
+    try {
+      const [byAad, byToken] = await Promise.all([
+        this.redis!.hgetall<Record<string, string>>(REDIS_AAD_KEY),
+        this.redis!.hgetall<Record<string, string>>(REDIS_TOKEN_KEY),
+      ]);
+      if (byAad) for (const [k, v] of Object.entries(byAad)) this.byAad.set(k, v);
+      if (byToken) for (const [k, v] of Object.entries(byToken)) this.byToken.set(k, v);
+      console.log(`[pairing-store] loaded ${this.byAad.size} pairing(s) from Redis`);
+    } catch (err) {
+      console.error("[pairing-store] Redis load failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  private loadFromFile(): void {
     try {
       if (!fs.existsSync(STATE_FILE)) return;
       const data: PairingsFile = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
@@ -57,11 +95,28 @@ export class PairingStore {
     } catch {}
   }
 
-  private save(): void {
+  private saveToFile(): void {
     const byAad: Record<string, string> = {};
     const byToken: Record<string, string> = {};
     for (const [k, v] of this.byAad.entries()) byAad[k] = v;
     for (const [k, v] of this.byToken.entries()) byToken[k] = v;
     fs.writeFileSync(STATE_FILE, JSON.stringify({ byAad, byToken }, null, 2));
+  }
+
+  private persist(aadObjectId: string, token: string): void {
+    if (this.redis) {
+      this.redis.hset(REDIS_AAD_KEY, { [aadObjectId]: token })
+        .catch((e) => console.error("[pairing-store] Redis hset byAad failed:", e?.message || e));
+      this.redis.hset(REDIS_TOKEN_KEY, { [token]: aadObjectId })
+        .catch((e) => console.error("[pairing-store] Redis hset byToken failed:", e?.message || e));
+    } else {
+      this.saveToFile();
+    }
+  }
+
+  private redisDel(key: string, field: string): void {
+    if (!this.redis) return;
+    this.redis.hdel(key, field)
+      .catch((e) => console.error("[pairing-store] Redis hdel failed:", e?.message || e));
   }
 }

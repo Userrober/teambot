@@ -1,7 +1,7 @@
-import app from "./app";
+import app, { pairingStore } from "./app";
 
-// Start the application
 (async () => {
+  await pairingStore.waitReady();
   await app.start();
   console.log(`\nBot started, app listening to`, process.env.PORT || process.env.port || 3978);
 })();

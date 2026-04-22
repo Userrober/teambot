@@ -419,4 +419,5 @@ app.on("message", async (context) => {
   }
 });
 
+export { pairingStore };
 export default app;

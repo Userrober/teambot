@@ -29,6 +29,7 @@
         "@microsoft/teams.apps": "^2.0.0",
         "@microsoft/teams.common": "^2.0.0",
         "@types/ws": "^8.18.1",
+        "@upstash/redis": "^1.37.0",
         "ws": "^8.20.0"
     },
     "devDependencies": {
