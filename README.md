@@ -148,32 +148,15 @@ claude-teams-client mirror-list  # 查看所有启用的目录
 
 #### 镜像 hooks 安装
 
-镜像需要 Claude Code 的 hooks 配合。在 `~/.claude/settings.json` 加：
+**自动安装**：客户端首次启动 (`claude-teams-client`) 会自动把 hook 脚本写到 `~/.claude/hooks/` 并合并配置到 `~/.claude/settings.json`，无需手动操作。
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          { "type": "command", "command": "bash ~/.claude/hooks/push-prompt-to-teams.sh", "timeout": 10 }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          { "type": "command", "command": "bash ~/.claude/hooks/push-to-teams.sh", "timeout": 10 }
-        ]
-      }
-    ]
-  }
-}
+如需手动重装：
+```bash
+claude-teams-client install-hooks
 ```
 
-`push-prompt-to-teams.sh` 和 `push-to-teams.sh` 在本仓库 `scripts/hooks/` 下，复制到 `~/.claude/hooks/` 即可。
+> hook 脚本和设置都是 idempotent 的——重复跑不会重复添加。
+> 如果你想看脚本内容，参考仓库 `scripts/hooks/`。
 
 ---
 
